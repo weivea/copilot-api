@@ -332,6 +332,26 @@ You can also read more about IDE integration here: [Add Claude Code to your IDE]
 
 The server supports HTTPS via TLS certificates. You can configure TLS through CLI arguments, a config file, or both.
 
+### Prerequisites
+
+The `cert:obtain` and `cert:renew` scripts require [certbot](https://certbot.eff.org/). Install it for your platform:
+
+```sh
+# Linux (Ubuntu/Debian)
+sudo apt install certbot
+
+# Linux (Fedora/RHEL)
+sudo dnf install certbot
+
+# macOS
+brew install certbot
+
+# Windows / All platforms (requires Python)
+pip install certbot
+```
+
+> **Note:** The script will check for certbot automatically and show installation instructions if it's not found.
+
 ### Quick Start
 
 ```sh

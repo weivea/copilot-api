@@ -44,8 +44,28 @@ function certbotDirFlags(): string {
   return `--config-dir ${certsDir} --work-dir ${certsDir}/work --logs-dir ${certsDir}/logs`
 }
 
+function ensureCertbot(): void {
+  try {
+    execSync("certbot --version", { stdio: "ignore" })
+  } catch {
+    consola.error("certbot is not installed or not found in PATH.")
+    consola.info("")
+    consola.info("Install certbot for your platform:")
+    consola.info("  Linux (Ubuntu/Debian): sudo apt install certbot")
+    consola.info("  Linux (Fedora/RHEL):   sudo dnf install certbot")
+    consola.info("  macOS:                 brew install certbot")
+    consola.info("  Windows:               pip install certbot")
+    consola.info("  All platforms:         pip install certbot")
+    consola.info("")
+    consola.info("For more details: https://certbot.eff.org/instructions")
+    process.exit(1)
+  }
+}
+
 async function main(): Promise<void> {
   const action = getAction()
+
+  ensureCertbot()
 
   if (action === "renew") {
     run(`certbot renew ${certbotDirFlags()}`)
