@@ -6,6 +6,7 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
+import { loadConfig, resolveTls } from "./lib/config"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
@@ -25,6 +26,8 @@ interface RunServerOptions {
   claudeCode: boolean
   showToken: boolean
   proxyEnv: boolean
+  tlsCert?: string
+  tlsKey?: string
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -64,7 +67,16 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
   )
 
-  const serverUrl = `http://localhost:${options.port}`
+  const config = await loadConfig()
+  const tls = resolveTls(config, options.tlsCert, options.tlsKey)
+
+  const protocol = tls ? "https" : "http"
+  const host = config.domain ?? "localhost"
+  const serverUrl = `${protocol}://${host}:${options.port}`
+
+  if (tls) {
+    consola.info(`TLS enabled — cert: ${tls.cert}, key: ${tls.key}`)
+  }
 
   if (options.claudeCode) {
     invariant(state.models, "Models should be loaded by now")
@@ -117,6 +129,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   serve({
     fetch: server.fetch as ServerHandler,
     port: options.port,
+    ...(tls && { tls }),
   })
 }
 
@@ -184,6 +197,14 @@ export const start = defineCommand({
       default: false,
       description: "Initialize proxy from environment variables",
     },
+    "tls-cert": {
+      type: "string",
+      description: "Path to TLS certificate file (PEM format)",
+    },
+    "tls-key": {
+      type: "string",
+      description: "Path to TLS private key file (PEM format)",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -202,6 +223,8 @@ export const start = defineCommand({
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],
+      tlsCert: args["tls-cert"],
+      tlsKey: args["tls-key"],
     })
   },
 })

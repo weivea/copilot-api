@@ -12,3 +12,7 @@ node_modules/
 
 # build output
 dist/
+
+# TLS certificates
+.certs/
+copilot-api.config.json

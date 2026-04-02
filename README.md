@@ -39,6 +39,7 @@ A reverse-engineered proxy for the GitHub Copilot API that exposes it as an Open
 - **Token Visibility**: Option to display GitHub and Copilot tokens during authentication and refresh for debugging (`--show-token`).
 - **Flexible Authentication**: Authenticate interactively or provide a GitHub token directly, suitable for CI/CD environments.
 - **Support for Different Account Types**: Works with individual, business, and enterprise GitHub Copilot plans.
+- **HTTPS / TLS Support**: Serve over HTTPS with your own TLS certificates. Includes built-in certbot integration for easy Let's Encrypt certificate management.
 
 ## Demo
 
@@ -163,6 +164,8 @@ The following command line options are available for the `start` command:
 | --claude-code  | Generate a command to launch Claude Code with Copilot API config              | false      | -c    |
 | --show-token   | Show GitHub and Copilot tokens on fetch and refresh                           | false      | none  |
 | --proxy-env    | Initialize proxy from environment variables                                   | false      | none  |
+| --tls-cert     | Path to TLS certificate file (PEM format)                                     | none       | none  |
+| --tls-key      | Path to TLS private key file (PEM format)                                     | none       | none  |
 
 ### Auth Command Options
 
@@ -325,6 +328,57 @@ Here is an example `.claude/settings.json` file:
 You can find more options here: [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings#environment-variables)
 
 You can also read more about IDE integration here: [Add Claude Code to your IDE](https://docs.anthropic.com/en/docs/claude-code/ide-integrations)
+
+## HTTPS / TLS
+
+The server supports HTTPS via TLS certificates. You can configure TLS through CLI arguments, a config file, or both.
+
+### Config File
+
+The server looks for a config file in the following order:
+
+1. Path specified via `--config` CLI flag
+2. `copilot-api.config.json` in the current working directory (project root)
+3. `~/.local/share/copilot-api/config.json` (global)
+
+Example `copilot-api.config.json`:
+
+```json
+{
+  "domain": "copilot.example.com",
+  "tls": {
+    "cert": "/etc/letsencrypt/live/copilot.example.com/fullchain.pem",
+    "key": "/etc/letsencrypt/live/copilot.example.com/privkey.pem"
+  }
+}
+```
+
+- If only `domain` is set (without `tls`), the server automatically uses certbot's default certificate paths (`/etc/letsencrypt/live/<domain>/`).
+- CLI flags `--tls-cert` and `--tls-key` take priority over the config file.
+
+### Using certbot to Obtain Certificates
+
+The project includes npm scripts that wrap [certbot](https://certbot.eff.org/) for Let's Encrypt certificates. You must have `certbot` installed on your system.
+
+```sh
+# Obtain a certificate (reads domain from config, or pass --domain)
+bun run cert:obtain -- --domain copilot.example.com
+
+# Renew all certificates
+bun run cert:renew
+```
+
+### Starting the Server with HTTPS
+
+```sh
+# Option 1: Automatic — set domain in config.json, certs are auto-detected
+npx copilot-api@latest start
+
+# Option 2: Explicit cert paths via CLI
+npx copilot-api@latest start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
+```
+
+When TLS is active, the server logs the certificate paths at startup and uses `https://` in all displayed URLs.
 
 ## Running from Source
 
