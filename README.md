@@ -60,60 +60,91 @@ bun install
 
 ## Using with Docker
 
-Build image
+### Prerequisites
+
+Before running in Docker, you need a GitHub token. Run the auth flow on a machine with a browser:
+
+```sh
+# Option 1: Run auth locally (requires Bun)
+bun run dev -- auth
+
+# Option 2: Run auth via Docker
+docker run -it -v ~/.local/share/copilot-api:/root/.local/share/copilot-api copilot-api --auth
+```
+
+This will open a browser for GitHub Device Flow authorization. Once completed, the token is saved to `~/.local/share/copilot-api/github_token`.
+
+### Build Image
 
 ```sh
 docker build -t copilot-api .
 ```
 
-Run the container
+### Run with Docker
 
 ```sh
-# Create a directory on your host to persist the GitHub token and related data
-mkdir -p ./copilot-data
-
-# Run the container with a bind mount to persist the token
-# This ensures your authentication survives container restarts
-
-docker run -p 4141:4141 -v $(pwd)/copilot-data:/root/.local/share/copilot-api copilot-api
+# Mount your local token directory into the container
+docker run -p 4141:4141 -v ~/.local/share/copilot-api:/root/.local/share/copilot-api copilot-api
 ```
 
-> **Note:**
-> The GitHub token and related data will be stored in `copilot-data` on your host. This is mapped to `/root/.local/share/copilot-api` inside the container, ensuring persistence across restarts.
-
-### Docker with Environment Variables
-
-You can pass the GitHub token directly to the container using environment variables:
+Alternatively, pass the GitHub token via environment variable:
 
 ```sh
-# Build with GitHub token
-docker build --build-arg GH_TOKEN=your_github_token_here -t copilot-api .
-
-# Run with GitHub token
-docker run -p 4141:4141 -e GH_TOKEN=your_github_token_here copilot-api
-
-# Run with additional options
-docker run -p 4141:4141 -e GH_TOKEN=your_token copilot-api start --verbose --port 4141
+docker run -p 4141:4141 -e GH_TOKEN=ghp_your_token_here copilot-api
 ```
 
-### Docker Compose Example
+### Docker Compose
+
+A `docker-compose.yml` is included in the repository:
 
 ```yaml
-version: "3.8"
 services:
   copilot-api:
     build: .
+    image: copilot-api
+    container_name: copilot-api
     ports:
-      - "4141:4141"
-    environment:
-      - GH_TOKEN=your_github_token_here
+      - "${PORT:-4141}:4141"
+    volumes:
+      - ~/.local/share/copilot-api:/root/.local/share/copilot-api
     restart: unless-stopped
 ```
 
-The Docker image includes:
+Usage:
+
+```sh
+# Build and start
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# View the auto-generated API auth token (cpk-...)
+docker compose exec copilot-api cat /root/.local/share/copilot-api/auth_token
+
+# Stop
+docker compose down
+```
+
+You can customize the port via a `.env` file:
+
+```sh
+echo 'PORT=8080' > .env
+docker compose up -d
+```
+
+To disable API auth token verification (e.g. for internal network use):
+
+```yaml
+services:
+  copilot-api:
+    # ... other settings ...
+    command: ["--no-auth"]
+```
+
+### Docker Image Features
 
 - Multi-stage build for optimized image size
-- Non-root user for enhanced security
 - Health check for container monitoring
 - Pinned base image version for reproducible builds
 
