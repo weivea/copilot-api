@@ -118,26 +118,6 @@ The Docker image includes:
 - Health check for container monitoring
 - Pinned base image version for reproducible builds
 
-## Using with npx
-
-You can run the project directly using npx:
-
-```sh
-npx copilot-api@latest start
-```
-
-With options:
-
-```sh
-npx copilot-api@latest start --port 8080
-```
-
-For authentication only:
-
-```sh
-npx copilot-api@latest auth
-```
-
 ## Command Structure
 
 Copilot API now uses a subcommand structure with these main commands:
