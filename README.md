@@ -415,44 +415,20 @@ bun run start [start|auth]
 
 ### Running as a Background Process (Linux)
 
-Start the server in the background using `nohup`:
+Use the provided scripts in the `scripts/` directory:
 
 ```sh
-# Start in background, logs to copilot-api.log
-nohup bun run start > copilot-api.log 2>&1 &
+# Start in background
+./scripts/start.sh
 
-# Save the process ID for later
-echo $! > copilot-api.pid
+# Stop
+./scripts/stop.sh
+
+# Restart
+./scripts/restart.sh
 ```
 
-Check if the server is running:
-
-```sh
-# Check process status
-cat copilot-api.pid | xargs ps -p
-
-# Or find the process
-ps aux | grep copilot-api
-```
-
-Stop the server:
-
-```sh
-# Stop using saved PID
-kill $(cat copilot-api.pid)
-
-# Or find and kill by name
-pkill -f "bun run start"
-```
-
-Restart the server:
-
-```sh
-# Stop, then start again
-kill $(cat copilot-api.pid) 2>/dev/null
-nohup bun run start > copilot-api.log 2>&1 &
-echo $! > copilot-api.pid
-```
+Logs are written to `copilot-api.log` in the project root. The PID is saved to `copilot-api.pid` for process management.
 
 ### Running as a systemd Service (Linux)
 

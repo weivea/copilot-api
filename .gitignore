@@ -16,3 +16,7 @@ dist/
 # TLS certificates
 .certs/
 copilot-api.config.json
+
+# Runtime files
+copilot-api.pid
+copilot-api.log
