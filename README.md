@@ -37,6 +37,7 @@ A reverse-engineered proxy for the GitHub Copilot API that exposes it as an Open
 - **Rate Limit Control**: Manage API usage with rate-limiting options (`--rate-limit`) and a waiting mechanism (`--wait`) to prevent errors from rapid requests.
 - **Manual Request Approval**: Manually approve or deny each API request for fine-grained control over usage (`--manual`).
 - **Token Visibility**: Option to display GitHub and Copilot tokens during authentication and refresh for debugging (`--show-token`).
+- **API Auth Token**: Protect your proxy with an auto-generated API key. Supports both `Authorization: Bearer` and `x-api-key` headers for OpenAI and Anthropic client compatibility. Enabled by default; disable with `--no-auth`.
 - **Flexible Authentication**: Authenticate interactively or provide a GitHub token directly, suitable for CI/CD environments.
 - **Support for Different Account Types**: Works with individual, business, and enterprise GitHub Copilot plans.
 - **HTTPS / TLS Support**: Serve over HTTPS with your own TLS certificates. Includes built-in certbot integration for easy Let's Encrypt certificate management.
@@ -143,6 +144,7 @@ Copilot API now uses a subcommand structure with these main commands:
 
 - `start`: Start the Copilot API server. This command will also handle authentication if needed.
 - `auth`: Run GitHub authentication flow without starting the server. This is typically used if you need to generate a token for use with the `--github-token` option, especially in non-interactive environments.
+- `auth-token`: View or regenerate the API auth token used for client authentication. The token is auto-generated on first server start and stored at `~/.local/share/copilot-api/auth_token`.
 - `check-usage`: Show your current GitHub Copilot usage and quota information directly in the terminal (no server required).
 - `debug`: Display diagnostic information including version, runtime details, file paths, and authentication status. Useful for troubleshooting and support.
 
@@ -163,9 +165,16 @@ The following command line options are available for the `start` command:
 | --github-token | Provide GitHub token directly (must be generated using the `auth` subcommand) | none       | -g    |
 | --claude-code  | Generate a command to launch Claude Code with Copilot API config              | false      | -c    |
 | --show-token   | Show GitHub and Copilot tokens on fetch and refresh                           | false      | none  |
+| --no-auth      | Disable auth token verification                                               | false      | none  |
 | --proxy-env    | Initialize proxy from environment variables                                   | false      | none  |
 | --tls-cert     | Path to TLS certificate file (PEM format)                                     | none       | none  |
 | --tls-key      | Path to TLS private key file (PEM format)                                     | none       | none  |
+
+### Auth Token Command Options
+
+| Option       | Description                            | Default | Alias |
+| ------------ | -------------------------------------- | ------- | ----- |
+| --regenerate | Force regenerate the auth token        | false   | none  |
 
 ### Auth Command Options
 
@@ -256,6 +265,15 @@ npx copilot-api@latest debug
 # Display debug information in JSON format
 npx copilot-api@latest debug --json
 
+# View your auth token
+npx copilot-api@latest auth-token
+
+# Regenerate auth token
+npx copilot-api@latest auth-token --regenerate
+
+# Start without auth token verification
+npx copilot-api@latest start --no-auth
+
 # Initialize proxy from environment variables (HTTP_PROXY, HTTPS_PROXY, etc.)
 npx copilot-api@latest start --proxy-env
 ```
@@ -309,7 +327,7 @@ Here is an example `.claude/settings.json` file:
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:4141",
-    "ANTHROPIC_AUTH_TOKEN": "dummy",
+    "ANTHROPIC_AUTH_TOKEN": "cpk-your-auth-token-here",
     "ANTHROPIC_MODEL": "gpt-4.1",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-4.1",
     "ANTHROPIC_SMALL_FAST_MODEL": "gpt-4.1",
@@ -324,6 +342,8 @@ Here is an example `.claude/settings.json` file:
   }
 }
 ```
+
+> **Note:** Replace `cpk-your-auth-token-here` with your actual auth token. Run `copilot-api auth-token` to view your token, or find it in the server startup logs.
 
 You can find more options here: [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings#environment-variables)
 
