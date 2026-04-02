@@ -206,37 +206,37 @@ Using with npx:
 
 ```sh
 # Basic usage with start command
-bun run start
+bun run start start
 
 # Run on custom port with verbose logging
-bun run start --port 8080 --verbose
+bun run start start --port 8080 --verbose
 
 # Use with a business plan GitHub account
-bun run start --account-type business
+bun run start start --account-type business
 
 # Use with an enterprise plan GitHub account
-bun run start --account-type enterprise
+bun run start start --account-type enterprise
 
 # Enable manual approval for each request
-bun run start --manual
+bun run start start --manual
 
 # Set rate limit to 30 seconds between requests
-bun run start --rate-limit 30
+bun run start start --rate-limit 30
 
 # Wait instead of error when rate limit is hit
-bun run start --rate-limit 30 --wait
+bun run start start --rate-limit 30 --wait
 
 # Provide GitHub token directly
-bun run start --github-token ghp_YOUR_TOKEN_HERE
+bun run start start --github-token ghp_YOUR_TOKEN_HERE
 
 # Run only the auth flow
-bun run auth
+bun run start auth
 
 # Run auth flow with verbose logging
-bun run auth --verbose
+bun run start auth --verbose
 
 # Show your Copilot usage/quota in the terminal (no server needed)
-bun run check-usage
+bun run start check-usage
 
 # Display debug information for troubleshooting
 bun run debug
@@ -251,10 +251,10 @@ bun run auth-token
 bun run auth-token --regenerate
 
 # Start without auth token verification
-bun run start --no-auth
+bun run start start --no-auth
 
 # Initialize proxy from environment variables (HTTP_PROXY, HTTPS_PROXY, etc.)
-bun run start --proxy-env
+bun run start start --proxy-env
 ```
 
 ## Using the Usage Viewer
@@ -263,7 +263,7 @@ After starting the server, a URL to the Copilot Usage Dashboard will be displaye
 
 1.  Start the server. For example:
     ```sh
-    bun run start
+    bun run start start
     ```
 
 
@@ -278,7 +278,7 @@ There are two ways to configure Claude Code to use this proxy:
 To get started, run the `start` command with the `--claude-code` flag:
 
 ```sh
-bun run start --claude-code
+bun run start start --claude-code
 ```
 
 You will be prompted to select a primary model and a "small, fast" model for background tasks. After selecting the models, a command will be copied to your clipboard. This command sets the necessary environment variables for Claude Code to use the proxy.
@@ -348,7 +348,7 @@ pip install certbot
 bun run cert:obtain -- --domain copilot.example.com
 
 # 2. Start the server — HTTPS is automatically enabled
-bun run start
+bun run start start 
 ```
 
 Running `cert:obtain` will:
@@ -390,7 +390,7 @@ If you have your own certificates, you can skip certbot and specify them directl
 
 ```sh
 # Via CLI flags
-bun run start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
+bun run start start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
 ```
 
 Or create `copilot-api.config.json` manually with your certificate paths.
@@ -410,7 +410,89 @@ bun run dev
 ### Production Mode
 
 ```sh
-bun run start
+bun run start [start|auth]
+```
+
+### Running as a Background Process (Linux)
+
+Start the server in the background using `nohup`:
+
+```sh
+# Start in background, logs to copilot-api.log
+nohup bun run start > copilot-api.log 2>&1 &
+
+# Save the process ID for later
+echo $! > copilot-api.pid
+```
+
+Check if the server is running:
+
+```sh
+# Check process status
+cat copilot-api.pid | xargs ps -p
+
+# Or find the process
+ps aux | grep copilot-api
+```
+
+Stop the server:
+
+```sh
+# Stop using saved PID
+kill $(cat copilot-api.pid)
+
+# Or find and kill by name
+pkill -f "bun run start"
+```
+
+Restart the server:
+
+```sh
+# Stop, then start again
+kill $(cat copilot-api.pid) 2>/dev/null
+nohup bun run start > copilot-api.log 2>&1 &
+echo $! > copilot-api.pid
+```
+
+### Running as a systemd Service (Linux)
+
+For a more robust setup, create a systemd service file at `/etc/systemd/system/copilot-api.service`:
+
+```ini
+[Unit]
+Description=Copilot API Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/path/to/copilot-api
+ExecStart=/usr/bin/env bun run start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then manage the service with standard systemd commands:
+
+```sh
+# Enable and start
+sudo systemctl enable copilot-api
+sudo systemctl start copilot-api
+
+# Check status
+sudo systemctl status copilot-api
+
+# Stop
+sudo systemctl stop copilot-api
+
+# Restart
+sudo systemctl restart copilot-api
+
+# View logs
+journalctl -u copilot-api -f
 ```
 
 ## Usage Tips
