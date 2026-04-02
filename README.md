@@ -242,13 +242,13 @@ bun run start check-usage
 bun run debug
 
 # Display debug information in JSON format
-bun run debug --json
+bun run start debug --json
 
 # View your auth token
-bun run auth-token
+bun run start auth-token
 
 # Regenerate auth token
-bun run auth-token --regenerate
+bun run start auth-token --regenerate
 
 # Start without auth token verification
 bun run start start --no-auth
@@ -256,6 +256,45 @@ bun run start start --no-auth
 # Initialize proxy from environment variables (HTTP_PROXY, HTTPS_PROXY, etc.)
 bun run start start --proxy-env
 ```
+
+## Auth Token
+
+The proxy is protected by an API auth token by default. This token must be included in every request to the proxy via the `Authorization: Bearer <token>` or `x-api-key: <token>` header.
+
+### How It Works
+
+- On first server start, a token is **auto-generated** and stored at `~/.local/share/copilot-api/auth_token`.
+- The token has the format `cpk-<hex>` (e.g. `cpk-abc123...`).
+- The token is displayed in the server startup logs.
+- To disable auth token verification, use `--no-auth` when starting the server.
+
+### Managing the Token
+
+Use the `auth-token` subcommand to view or regenerate the token:
+
+```sh
+# View the current auth token
+bun run start auth-token
+
+# Regenerate the auth token
+bun run start auth-token --regenerate
+```
+
+### Using the Token with Clients
+
+When making requests to the proxy, include the token in the request headers:
+
+```sh
+# Using Authorization header (OpenAI-style)
+curl http://localhost:4141/v1/models \
+  -H "Authorization: Bearer cpk-your-token-here"
+
+# Using x-api-key header (Anthropic-style)
+curl http://localhost:4141/v1/messages \
+  -H "x-api-key: cpk-your-token-here"
+```
+
+For Claude Code, set the token in `.claude/settings.json` as the `ANTHROPIC_AUTH_TOKEN` environment variable (see [Using with Claude Code](#using-with-claude-code)).
 
 ## Using the Usage Viewer
 
