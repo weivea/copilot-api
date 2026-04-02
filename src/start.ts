@@ -6,6 +6,7 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
+import { setupAuthToken } from "./lib/auth-token"
 import { loadConfig, resolveTls } from "./lib/config"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
@@ -25,6 +26,7 @@ interface RunServerOptions {
   githubToken?: string
   claudeCode: boolean
   showToken: boolean
+  noAuth: boolean
   proxyEnv: boolean
   tlsCert?: string
   tlsKey?: string
@@ -49,6 +51,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.rateLimitSeconds = options.rateLimit
   state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
+  state.authEnabled = !options.noAuth
 
   await ensurePaths()
   await cacheVSCodeVersion()
@@ -62,6 +65,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   await setupCopilotToken()
   await cacheModels()
+  await setupAuthToken()
 
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
@@ -100,7 +104,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     const command = generateEnvScript(
       {
         ANTHROPIC_BASE_URL: serverUrl,
-        ANTHROPIC_AUTH_TOKEN: "dummy",
+        ANTHROPIC_AUTH_TOKEN: state.authToken ?? "dummy",
         ANTHROPIC_MODEL: selectedModel,
         ANTHROPIC_DEFAULT_SONNET_MODEL: selectedModel,
         ANTHROPIC_SMALL_FAST_MODEL: selectedSmallModel,
@@ -192,6 +196,11 @@ export const start = defineCommand({
       default: false,
       description: "Show GitHub and Copilot tokens on fetch and refresh",
     },
+    "no-auth": {
+      type: "boolean",
+      default: false,
+      description: "Disable auth token verification",
+    },
     "proxy-env": {
       type: "boolean",
       default: false,
@@ -222,6 +231,7 @@ export const start = defineCommand({
       githubToken: args["github-token"],
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
+      noAuth: args["no-auth"],
       proxyEnv: args["proxy-env"],
       tlsCert: args["tls-cert"],
       tlsKey: args["tls-key"],
