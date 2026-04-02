@@ -206,77 +206,66 @@ Using with npx:
 
 ```sh
 # Basic usage with start command
-npx copilot-api@latest start
+bun run start
 
 # Run on custom port with verbose logging
-npx copilot-api@latest start --port 8080 --verbose
+bun run start --port 8080 --verbose
 
 # Use with a business plan GitHub account
-npx copilot-api@latest start --account-type business
+bun run start --account-type business
 
 # Use with an enterprise plan GitHub account
-npx copilot-api@latest start --account-type enterprise
+bun run start --account-type enterprise
 
 # Enable manual approval for each request
-npx copilot-api@latest start --manual
+bun run start --manual
 
 # Set rate limit to 30 seconds between requests
-npx copilot-api@latest start --rate-limit 30
+bun run start --rate-limit 30
 
 # Wait instead of error when rate limit is hit
-npx copilot-api@latest start --rate-limit 30 --wait
+bun run start --rate-limit 30 --wait
 
 # Provide GitHub token directly
-npx copilot-api@latest start --github-token ghp_YOUR_TOKEN_HERE
+bun run start --github-token ghp_YOUR_TOKEN_HERE
 
 # Run only the auth flow
-npx copilot-api@latest auth
+bun run auth
 
 # Run auth flow with verbose logging
-npx copilot-api@latest auth --verbose
+bun run auth --verbose
 
 # Show your Copilot usage/quota in the terminal (no server needed)
-npx copilot-api@latest check-usage
+bun run check-usage
 
 # Display debug information for troubleshooting
-npx copilot-api@latest debug
+bun run debug
 
 # Display debug information in JSON format
-npx copilot-api@latest debug --json
+bun run debug --json
 
 # View your auth token
-npx copilot-api@latest auth-token
+bun run auth-token
 
 # Regenerate auth token
-npx copilot-api@latest auth-token --regenerate
+bun run auth-token --regenerate
 
 # Start without auth token verification
-npx copilot-api@latest start --no-auth
+bun run start --no-auth
 
 # Initialize proxy from environment variables (HTTP_PROXY, HTTPS_PROXY, etc.)
-npx copilot-api@latest start --proxy-env
+bun run start --proxy-env
 ```
 
 ## Using the Usage Viewer
 
 After starting the server, a URL to the Copilot Usage Dashboard will be displayed in your console. This dashboard is a web interface for monitoring your API usage.
 
-1.  Start the server. For example, using npx:
+1.  Start the server. For example:
     ```sh
-    npx copilot-api@latest start
+    bun run start
     ```
-2.  The server will output a URL to the usage viewer. Copy and paste this URL into your browser. It will look something like this:
-    `https://ericc-ch.github.io/copilot-api?endpoint=http://localhost:4141/usage`
-    - If you use the `start.bat` script on Windows, this page will open automatically.
 
-The dashboard provides a user-friendly interface to view your Copilot usage data:
-
-- **API Endpoint URL**: The dashboard is pre-configured to fetch data from your local server endpoint via the URL query parameter. You can change this URL to point to any other compatible API endpoint.
-- **Fetch Data**: Click the "Fetch" button to load or refresh the usage data. The dashboard will automatically fetch data on load.
-- **Usage Quotas**: View a summary of your usage quotas for different services like Chat and Completions, displayed with progress bars for a quick overview.
-- **Detailed Information**: See the full JSON response from the API for a detailed breakdown of all available usage statistics.
-- **URL-based Configuration**: You can also specify the API endpoint directly in the URL using a query parameter. This is useful for bookmarks or sharing links. For example:
-  `https://ericc-ch.github.io/copilot-api?endpoint=http://your-api-server/usage`
 
 ## Using with Claude Code
 
@@ -289,7 +278,7 @@ There are two ways to configure Claude Code to use this proxy:
 To get started, run the `start` command with the `--claude-code` flag:
 
 ```sh
-npx copilot-api@latest start --claude-code
+bun run start --claude-code
 ```
 
 You will be prompted to select a primary model and a "small, fast" model for background tasks. After selecting the models, a command will be copied to your clipboard. This command sets the necessary environment variables for Claude Code to use the proxy.
@@ -401,7 +390,7 @@ If you have your own certificates, you can skip certbot and specify them directl
 
 ```sh
 # Via CLI flags
-npx copilot-api@latest start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
+bun run start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
 ```
 
 Or create `copilot-api.config.json` manually with your certificate paths.
