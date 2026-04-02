@@ -41,5 +41,5 @@ export async function setupAuthToken(): Promise<void> {
 
   // eslint-disable-next-line require-atomic-updates
   state.authToken = token
-  consola.info("Auth: enabled (use --no-auth to disable)")
+  consola.info(`Auth: enabled (token: ${token})`)
 }
