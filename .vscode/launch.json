@@ -1,0 +1,21 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+
+    {
+      "name": "Debug Bun App",
+      "type": "node",                // VS Code 调试器还是用 Node 的
+      "request": "launch",
+      "runtimeExecutable": "bun",    // 指定用 bun 作为运行时
+      "runtimeArgs": ["--inspect-brk"], // 启动时挂上调试器
+      "program": "${workspaceFolder}/src/main.ts", // 入口文件
+      "args": ["start"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    }
+  ]
+}
