@@ -5,10 +5,12 @@ import consola from "consola"
 
 export class HTTPError extends Error {
   response: Response
+  bodyText?: string
 
-  constructor(message: string, response: Response) {
+  constructor(message: string, response: Response, bodyText?: string) {
     super(message)
     this.response = response
+    this.bodyText = bodyText
   }
 }
 
@@ -16,7 +18,7 @@ export async function forwardError(c: Context, error: unknown) {
   consola.error("Error occurred:", error)
 
   if (error instanceof HTTPError) {
-    const errorText = await error.response.text()
+    const errorText = error.bodyText || "Unknown error"
     let errorJson: unknown
     try {
       errorJson = JSON.parse(errorText)
@@ -45,3 +47,4 @@ export async function forwardError(c: Context, error: unknown) {
     500,
   )
 }
+
