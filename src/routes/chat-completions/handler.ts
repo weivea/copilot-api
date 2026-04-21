@@ -1,7 +1,7 @@
 import type { Context } from "hono"
 
 import consola from "consola"
-import { streamSSE, type SSEMessage } from "hono/streaming"
+import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
@@ -15,7 +15,12 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 function isGptModel(model: string): boolean {
-  return model.startsWith("gpt-") || model.startsWith("o1-") || model.startsWith("o3-") || model.startsWith("o4-")
+  return (
+    model.startsWith("gpt-")
+    || model.startsWith("o1-")
+    || model.startsWith("o3-")
+    || model.startsWith("o4-")
+  )
 }
 
 function hasThinkingBlock(obj: any): boolean {
@@ -28,54 +33,74 @@ function hasThinkingBlock(obj: any): boolean {
 
 function removeThinkingBlocks(content: any): any {
   if (!content) return content
-  
+
   // Array: filter out thinking blocks
   if (Array.isArray(content)) {
     const filtered = content.filter((item: any) => {
-      if (item && typeof item === "object" && item.type === "thinking") return false
+      if (item && typeof item === "object" && item.type === "thinking")
+        return false
       return true
     })
     if (filtered.length === 0) return ""
-    if (filtered.length === 1 && filtered[0]?.type === "text" && typeof filtered[0]?.text === "string") {
+    if (
+      filtered.length === 1
+      && filtered[0]?.type === "text"
+      && typeof filtered[0]?.text === "string"
+    ) {
       return filtered[0].text
     }
     return filtered
   }
-  
+
   // String: try parsing as JSON in case thinking blocks are serialized
   if (typeof content === "string") {
     try {
       const parsed = JSON.parse(content)
-      if (Array.isArray(parsed) && parsed.some((b: any) => b?.type === "thinking")) {
+      if (
+        Array.isArray(parsed)
+        && parsed.some((b: any) => b?.type === "thinking")
+      ) {
         const filtered = parsed.filter((b: any) => !(b?.type === "thinking"))
         if (filtered.length === 0) return ""
-        if (filtered.length === 1 && filtered[0]?.type === "text") return filtered[0].text
+        if (filtered.length === 1 && filtered[0]?.type === "text")
+          return filtered[0].text
         return filtered
       }
     } catch {}
     return content
   }
-  
+
   // Object (not array): if it IS a thinking block, return empty
   if (typeof content === "object" && content.type === "thinking") return ""
-  
+
   return content
 }
 
-function stripThinkingBlocks(messages: any[]): any[] {
+function stripThinkingBlocks(messages: Array<any>): Array<any> {
   let totalStripped = 0
   const result = messages.map((msg, idx) => {
     if (!msg.content) return msg
-    
+
     const had = hasThinkingBlock(msg.content)
     if (!had) return msg
-    
+
     totalStripped++
-    consola.info("Stripping thinking from msg[" + idx + "] role=" + msg.role + " contentType=" + typeof msg.content + " isArray=" + Array.isArray(msg.content))
+    consola.info(
+      "Stripping thinking from msg["
+        + idx
+        + "] role="
+        + msg.role
+        + " contentType="
+        + typeof msg.content
+        + " isArray="
+        + Array.isArray(msg.content),
+    )
     const cleaned = removeThinkingBlocks(msg.content)
     return { ...msg, content: cleaned }
   })
-  consola.info("stripThinkingBlocks: messages with thinking stripped = " + totalStripped)
+  consola.info(
+    "stripThinkingBlocks: messages with thinking stripped = " + totalStripped,
+  )
   return result
 }
 
@@ -88,7 +113,15 @@ export async function handleCompletion(c: Context) {
   payload.messages.forEach((msg: any, idx: number) => {
     const msgStr = JSON.stringify(msg)
     if (msgStr.length > 500) {
-      consola.info("msg[" + idx + "] role=" + msg.role + " (truncated): " + msgStr.slice(0, 500) + "...")
+      consola.info(
+        "msg["
+          + idx
+          + "] role="
+          + msg.role
+          + " (truncated): "
+          + msgStr.slice(0, 500)
+          + "...",
+      )
     } else {
       consola.info("msg[" + idx + "] role=" + msg.role + ": " + msgStr)
     }
@@ -99,12 +132,27 @@ export async function handleCompletion(c: Context) {
   const thinkingIdx = fullPayload.indexOf('"thinking"')
   const signatureIdx = fullPayload.indexOf('"signature"')
   const reasoningIdx = fullPayload.indexOf('"reasoning_text"')
-  consola.info("Payload scan - thinking at:" + thinkingIdx + " signature at:" + signatureIdx + " reasoning_text at:" + reasoningIdx)
+  consola.info(
+    "Payload scan - thinking at:"
+      + thinkingIdx
+      + " signature at:"
+      + signatureIdx
+      + " reasoning_text at:"
+      + reasoningIdx,
+  )
   if (signatureIdx > 0) {
-    consola.info("Signature context: ..." + fullPayload.slice(Math.max(0, signatureIdx - 100), signatureIdx + 100) + "...")
+    consola.info(
+      "Signature context: ..."
+        + fullPayload.slice(Math.max(0, signatureIdx - 100), signatureIdx + 100)
+        + "...",
+    )
   }
   if (thinkingIdx > 0) {
-    consola.info("Thinking context: ..." + fullPayload.slice(Math.max(0, thinkingIdx - 100), thinkingIdx + 100) + "...")
+    consola.info(
+      "Thinking context: ..."
+        + fullPayload.slice(Math.max(0, thinkingIdx - 100), thinkingIdx + 100)
+        + "...",
+    )
   }
 
   // Also strip reasoning_text from assistant messages (causes thinking block validation)
@@ -144,12 +192,10 @@ export async function handleCompletion(c: Context) {
       ;(payload as any).max_completion_tokens = limit
     }
     delete (payload as any).max_tokens
-  } else {
-    if (isNullish(payload.max_tokens)) {
-      payload = {
-        ...payload,
-        max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
-      }
+  } else if (isNullish(payload.max_tokens)) {
+    payload = {
+      ...payload,
+      max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
     }
   }
 
@@ -159,16 +205,60 @@ export async function handleCompletion(c: Context) {
     return c.json(response)
   }
 
-  return streamSSE(c, async (stream) => {
-    for await (const chunk of response) {
-      await stream.writeSSE(chunk as SSEMessage)
-    }
+  return streamSSE(
+    c,
+    (stream) => pipeOpenAIStream(stream, response),
+    (error) => {
+      consola.error("streamSSE onError (chat-completions):", error)
+      return Promise.resolve()
+    },
+  )
+}
+
+async function pipeOpenAIStream(
+  stream: SSEStreamingApi,
+  response: AsyncIterable<{ data?: string }>,
+): Promise<void> {
+  const abortState = { aborted: false }
+  stream.onAbort(() => {
+    abortState.aborted = true
   })
+
+  // Keep-alive comment frames so proxies don't close idle sockets while
+  // upstream is slow to produce the first / next token.
+  const pingInterval = setInterval(() => {
+    if (abortState.aborted || stream.closed) return
+    stream.write(": keepalive\n\n").catch(() => {
+      /* ignore */
+    })
+  }, 15_000)
+
+  try {
+    for await (const chunk of response) {
+      if (abortState.aborted) break
+      if (chunk.data === undefined) continue
+      await stream.writeSSE({ data: chunk.data })
+    }
+  } catch (error) {
+    consola.error("Upstream stream error, closing gracefully:", error)
+    if (!abortState.aborted) {
+      const message = error instanceof Error ? error.message : String(error)
+      try {
+        await stream.writeSSE({
+          data: JSON.stringify({
+            error: { message, type: "upstream_error" },
+          }),
+        })
+        await stream.writeSSE({ data: "[DONE]" })
+      } catch {
+        /* ignore */
+      }
+    }
+  } finally {
+    clearInterval(pingInterval)
+  }
 }
 
 const isNonStreaming = (
   response: Awaited<ReturnType<typeof createChatCompletions>>,
 ): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
-
-
-

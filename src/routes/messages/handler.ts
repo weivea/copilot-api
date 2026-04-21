@@ -1,7 +1,7 @@
 import type { Context } from "hono"
 
 import consola from "consola"
-import { streamSSE } from "hono/streaming"
+import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
@@ -54,15 +54,47 @@ export async function handleCompletion(c: Context) {
   }
 
   consola.debug("Streaming response from Copilot")
-  return streamSSE(c, async (stream) => {
-    const streamState: AnthropicStreamState = {
-      messageStartSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      toolCalls: {},
-    }
+  return streamSSE(
+    c,
+    (stream) => runAnthropicStream(stream, response),
+    (error, stream) => handleAnthropicStreamFatalError(error, stream),
+  )
+}
 
+async function runAnthropicStream(
+  stream: SSEStreamingApi,
+  response: AsyncIterable<{ data?: string }>,
+): Promise<void> {
+  const streamState: AnthropicStreamState = {
+    messageStartSent: false,
+    contentBlockIndex: 0,
+    contentBlockOpen: false,
+    toolCalls: {},
+  }
+
+  const abortState = { aborted: false }
+  stream.onAbort(() => {
+    abortState.aborted = true
+    consola.debug("Client aborted Anthropic stream")
+  })
+
+  // Periodic SSE ping to keep intermediaries from closing the socket
+  // while upstream is slow to produce the first / next token.
+  const pingInterval = setInterval(() => {
+    if (abortState.aborted || stream.closed) return
+    stream
+      .writeSSE({
+        event: "ping",
+        data: JSON.stringify({ type: "ping" }),
+      })
+      .catch(() => {
+        /* ignore: stream may be closing */
+      })
+  }, 15_000)
+
+  try {
     for await (const rawEvent of response) {
+      if (abortState.aborted) break
       consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
       if (rawEvent.data === "[DONE]") {
         break
@@ -83,7 +115,75 @@ export async function handleCompletion(c: Context) {
         })
       }
     }
+  } catch (error) {
+    consola.error("Upstream stream error, closing gracefully:", error)
+    if (!abortState.aborted) {
+      await emitAnthropicStreamError(stream, streamState, error)
+    }
+  } finally {
+    clearInterval(pingInterval)
+  }
+}
+
+async function handleAnthropicStreamFatalError(
+  error: Error,
+  stream: SSEStreamingApi,
+): Promise<void> {
+  consola.error("streamSSE onError:", error)
+  try {
+    await emitAnthropicStreamError(
+      stream,
+      {
+        messageStartSent: true,
+        contentBlockIndex: 0,
+        contentBlockOpen: false,
+        toolCalls: {},
+      },
+      error,
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+async function emitAnthropicStreamError(
+  stream: SSEStreamingApi,
+  streamState: AnthropicStreamState,
+  error: unknown,
+): Promise<void> {
+  if (stream.closed) return
+  const message = error instanceof Error ? error.message : String(error)
+
+  const writeSafe = async (event: string, data: unknown) => {
+    try {
+      await stream.writeSSE({ event, data: JSON.stringify(data) })
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // If a content block is still open, close it so the client state machine
+  // doesn't get stuck.
+  if (streamState.contentBlockOpen) {
+    await writeSafe("content_block_stop", {
+      type: "content_block_stop",
+      index: streamState.contentBlockIndex,
+    })
+  }
+
+  await writeSafe("error", {
+    type: "error",
+    error: { type: "api_error", message },
   })
+
+  // Always end with a proper message_stop so Claude Code finishes the turn
+  // instead of reporting "socket closed unexpectedly".
+  await writeSafe("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: "end_turn", stop_sequence: null },
+    usage: { output_tokens: 0 },
+  })
+  await writeSafe("message_stop", { type: "message_stop" })
 }
 
 const isNonStreaming = (
