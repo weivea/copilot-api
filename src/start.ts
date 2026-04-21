@@ -196,10 +196,10 @@ export const start = defineCommand({
       default: false,
       description: "Show GitHub and Copilot tokens on fetch and refresh",
     },
-    "no-auth": {
+    auth: {
       type: "boolean",
-      default: false,
-      description: "Disable auth token verification",
+      default: true,
+      description: "Enable auth token verification (pass --no-auth to disable)",
     },
     "proxy-env": {
       type: "boolean",
@@ -231,7 +231,7 @@ export const start = defineCommand({
       githubToken: args["github-token"],
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
-      noAuth: args["no-auth"],
+      noAuth: !args.auth,
       proxyEnv: args["proxy-env"],
       tlsCert: args["tls-cert"],
       tlsKey: args["tls-key"],
