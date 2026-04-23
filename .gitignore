@@ -20,3 +20,5 @@ copilot-api.config.json
 # Runtime files
 copilot-api.pid
 copilot-api.log
+# Brainstorming visual companion sessions
+.superpowers/
