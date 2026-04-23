@@ -6,6 +6,8 @@ import { generateToken } from "~/lib/auth-token-utils"
 import { PATHS } from "~/lib/paths"
 import { state } from "~/lib/state"
 
+export { generateToken as generateAuthToken } from "~/lib/auth-token-utils"
+
 export async function loadAuthToken(): Promise<string | undefined> {
   try {
     const token = await fs.readFile(PATHS.AUTH_TOKEN_PATH, "utf8")
