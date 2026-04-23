@@ -1,3 +1,5 @@
+import type { Context } from "hono"
+
 import { Hono } from "hono"
 import { z } from "zod"
 
@@ -105,22 +107,32 @@ const PatchSchema = z.object({
   lifetime_token_limit: z.number().int().positive().nullable().optional(),
 })
 
-async function loadTargetOr404(c: any, id: number) {
+async function loadTargetOr404(
+  c: Context,
+  id: number,
+): Promise<
+  | { ok: true; row: NonNullable<Awaited<ReturnType<typeof getAuthTokenById>>> }
+  | { ok: false; resp: Response }
+> {
   const row = await getAuthTokenById(id)
   if (!row) {
-    return [
-      undefined,
-      c.json({ error: { type: "not_found", message: "Token not found" } }, 404),
-    ] as const
+    return {
+      ok: false,
+      resp: c.json(
+        { error: { type: "not_found", message: "Token not found" } },
+        404,
+      ),
+    }
   }
-  return [row, undefined] as const
+  return { ok: true, row }
 }
 
 adminTokensRoutes.patch("/:id", async (c) => {
   const role = c.get("sessionRole")
   const id = Number.parseInt(c.req.param("id"), 10)
-  const [row, errResp] = await loadTargetOr404(c, id)
-  if (errResp) return errResp
+  const r = await loadTargetOr404(c, id)
+  if (!r.ok) return r.resp
+  const row = r.row
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
       { error: { type: "permission_denied", message: "Cannot modify another admin" } },
@@ -158,8 +170,9 @@ adminTokensRoutes.patch("/:id", async (c) => {
 adminTokensRoutes.delete("/:id", async (c) => {
   const role = c.get("sessionRole")
   const id = Number.parseInt(c.req.param("id"), 10)
-  const [row, errResp] = await loadTargetOr404(c, id)
-  if (errResp) return errResp
+  const r = await loadTargetOr404(c, id)
+  if (!r.ok) return r.resp
+  const row = r.row
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
       { error: { type: "permission_denied", message: "Cannot delete another admin" } },
@@ -174,8 +187,9 @@ adminTokensRoutes.delete("/:id", async (c) => {
 adminTokensRoutes.post("/:id/reset-monthly", async (c) => {
   const role = c.get("sessionRole")
   const id = Number.parseInt(c.req.param("id"), 10)
-  const [row, errResp] = await loadTargetOr404(c, id)
-  if (errResp) return errResp
+  const r = await loadTargetOr404(c, id)
+  if (!r.ok) return r.resp
+  const row = r.row
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
       { error: { type: "permission_denied", message: "Cannot reset another admin" } },
@@ -195,8 +209,8 @@ adminTokensRoutes.post("/:id/reset-lifetime", async (c) => {
     )
   }
   const id = Number.parseInt(c.req.param("id"), 10)
-  const [, errResp] = await loadTargetOr404(c, id)
-  if (errResp) return errResp
+  const r = await loadTargetOr404(c, id)
+  if (!r.ok) return r.resp
   await setLifetimeUsed(id, 0)
   await appendUsageReset(id, "lifetime", Date.now())
   return c.json({ ok: true })

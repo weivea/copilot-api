@@ -64,15 +64,8 @@ export async function handleCompletion(c: Context) {
   const usage = { prompt: 0, completion: 0, total: 0 }
   return streamSSE(
     c,
-    (stream) => runAnthropicStream(stream, response, usage),
+    (stream) => runAnthropicStream(stream, response, usage, c, openAIPayload.model),
     (error, stream) => handleAnthropicStreamFatalError(error, stream),
-  ).finally(() =>
-    recordUsage(c, {
-      model: openAIPayload.model,
-      promptTokens: usage.prompt || null,
-      completionTokens: usage.completion || null,
-      totalTokens: usage.total || null,
-    }),
   )
 }
 
@@ -80,6 +73,8 @@ async function runAnthropicStream(
   stream: SSEStreamingApi,
   response: AsyncIterable<{ data?: string }>,
   usage: { prompt: number; completion: number; total: number },
+  c: Context,
+  model: string,
 ): Promise<void> {
   const streamState: AnthropicStreamState = {
     messageStartSent: false,
@@ -143,6 +138,12 @@ async function runAnthropicStream(
     }
   } finally {
     clearInterval(pingInterval)
+    recordUsage(c, {
+      model,
+      promptTokens: usage.prompt || null,
+      completionTokens: usage.completion || null,
+      totalTokens: usage.total || null,
+    })
   }
 }
 

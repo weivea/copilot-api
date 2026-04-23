@@ -1,3 +1,5 @@
+import type { Context } from "hono"
+
 import { Hono } from "hono"
 import crypto from "node:crypto"
 import { z } from "zod"
@@ -17,7 +19,7 @@ const LoginSchema = z.object({
   ttl_days: z.union([z.literal(1), z.literal(7), z.literal(30)]),
 })
 
-function dashboardGate(c: Parameters<typeof Hono.prototype.get>[1] extends infer F ? any : any) {
+function dashboardGate(c: Context) {
   return c.json(
     { error: { type: "dashboard_disabled", message: "Dashboard is disabled" } },
     503,
