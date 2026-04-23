@@ -25,6 +25,7 @@
     "build": "tsdown",
     "cert:obtain": "bun run ./src/scripts/cert.ts obtain",
     "cert:renew": "bun run ./src/scripts/cert.ts renew",
+    "db:generate": "drizzle-kit generate",
     "dev": "bun run --watch ./src/main.ts",
     "generate-token": "bun run ./src/scripts/generate-token.ts",
     "knip": "knip-bun",
