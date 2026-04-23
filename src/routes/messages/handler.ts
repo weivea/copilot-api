@@ -6,6 +6,7 @@ import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { recordUsage } from "~/lib/usage-recorder"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -50,20 +51,35 @@ export async function handleCompletion(c: Context) {
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
+    recordUsage(c, {
+      model: openAIPayload.model,
+      promptTokens: response.usage?.prompt_tokens ?? null,
+      completionTokens: response.usage?.completion_tokens ?? null,
+      totalTokens: response.usage?.total_tokens ?? null,
+    })
     return c.json(anthropicResponse)
   }
 
   consola.debug("Streaming response from Copilot")
+  const usage = { prompt: 0, completion: 0, total: 0 }
   return streamSSE(
     c,
-    (stream) => runAnthropicStream(stream, response),
+    (stream) => runAnthropicStream(stream, response, usage),
     (error, stream) => handleAnthropicStreamFatalError(error, stream),
+  ).finally(() =>
+    recordUsage(c, {
+      model: openAIPayload.model,
+      promptTokens: usage.prompt || null,
+      completionTokens: usage.completion || null,
+      totalTokens: usage.total || null,
+    }),
   )
 }
 
 async function runAnthropicStream(
   stream: SSEStreamingApi,
   response: AsyncIterable<{ data?: string }>,
+  usage: { prompt: number; completion: number; total: number },
 ): Promise<void> {
   const streamState: AnthropicStreamState = {
     messageStartSent: false,
@@ -105,6 +121,11 @@ async function runAnthropicStream(
       }
 
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+      if ((chunk as any).usage) {
+        usage.prompt = (chunk as any).usage.prompt_tokens ?? usage.prompt
+        usage.completion = (chunk as any).usage.completion_tokens ?? usage.completion
+        usage.total = (chunk as any).usage.total_tokens ?? usage.total
+      }
       const events = translateChunkToAnthropicEvents(chunk, streamState)
 
       for (const event of events) {
