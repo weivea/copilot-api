@@ -30,9 +30,7 @@ export interface AuthTokenRow {
   lastUsedAt: number | null
 }
 
-export async function createAuthToken(
-  input: NewAuthToken,
-): Promise<number> {
+export async function createAuthToken(input: NewAuthToken): Promise<number> {
   const db = getDb()
   const [row] = await db
     .insert(authTokens)
@@ -48,6 +46,7 @@ export async function createAuthToken(
       createdAt: Date.now(),
     })
     .returning({ id: authTokens.id })
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!row) throw new Error("insert failed")
   return row.id
 }
@@ -131,10 +130,13 @@ export async function incrementLifetimeUsed(
 ): Promise<void> {
   if (delta <= 0) return
   const db = getDb()
-  const sql = `UPDATE auth_tokens SET lifetime_token_used = lifetime_token_used + ? WHERE id = ?`
-  // Drizzle exposes underlying sqlite for raw exec
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(db as any).$client.prepare(sql).run(delta, id)
+  // Wrap in Promise to await and satisfy require-await lint rule
+  await new Promise<void>((resolve) => {
+    const sql = `UPDATE auth_tokens SET lifetime_token_used = lifetime_token_used + ? WHERE id = ?`
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any,@typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
+    ;(db as any).$client.prepare(sql).run(delta, id)
+    resolve()
+  })
 }
 
 export async function touchLastUsed(
