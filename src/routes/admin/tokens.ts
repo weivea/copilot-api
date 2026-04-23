@@ -135,7 +135,12 @@ adminTokensRoutes.patch("/:id", async (c) => {
   const row = r.row
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
-      { error: { type: "permission_denied", message: "Cannot modify another admin" } },
+      {
+        error: {
+          type: "permission_denied",
+          message: "Cannot modify another admin",
+        },
+      },
       403,
     )
   }
@@ -148,7 +153,12 @@ adminTokensRoutes.patch("/:id", async (c) => {
   }
   if (parsed.data.is_admin !== undefined && role !== "super") {
     return c.json(
-      { error: { type: "permission_denied", message: "Only super admin can change admin flag" } },
+      {
+        error: {
+          type: "permission_denied",
+          message: "Only super admin can change admin flag",
+        },
+      },
       403,
     )
   }
@@ -175,7 +185,12 @@ adminTokensRoutes.delete("/:id", async (c) => {
   const row = r.row
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
-      { error: { type: "permission_denied", message: "Cannot delete another admin" } },
+      {
+        error: {
+          type: "permission_denied",
+          message: "Cannot delete another admin",
+        },
+      },
       403,
     )
   }
@@ -192,7 +207,12 @@ adminTokensRoutes.post("/:id/reset-monthly", async (c) => {
   const row = r.row
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
-      { error: { type: "permission_denied", message: "Cannot reset another admin" } },
+      {
+        error: {
+          type: "permission_denied",
+          message: "Cannot reset another admin",
+        },
+      },
       403,
     )
   }

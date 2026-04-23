@@ -30,8 +30,6 @@ export function getDb(): BunSQLiteDatabase<typeof schema> {
 }
 
 // Test helper: replace the active DB (e.g. in-memory) without re-running migrations
-export function _setDbForTest(
-  next: BunSQLiteDatabase<typeof schema>,
-): void {
+export function _setDbForTest(next: BunSQLiteDatabase<typeof schema>): void {
   db = next
 }

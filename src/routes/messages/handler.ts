@@ -64,7 +64,8 @@ export async function handleCompletion(c: Context) {
   const usage = { prompt: 0, completion: 0, total: 0 }
   return streamSSE(
     c,
-    (stream) => runAnthropicStream(stream, response, usage, c, openAIPayload.model),
+    (stream) =>
+      runAnthropicStream(stream, response, usage, c, openAIPayload.model),
     (error, stream) => handleAnthropicStreamFatalError(error, stream),
   )
 }
@@ -118,7 +119,8 @@ async function runAnthropicStream(
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
       if ((chunk as any).usage) {
         usage.prompt = (chunk as any).usage.prompt_tokens ?? usage.prompt
-        usage.completion = (chunk as any).usage.completion_tokens ?? usage.completion
+        usage.completion =
+          (chunk as any).usage.completion_tokens ?? usage.completion
         usage.total = (chunk as any).usage.total_tokens ?? usage.total
       }
       const events = translateChunkToAnthropicEvents(chunk, streamState)

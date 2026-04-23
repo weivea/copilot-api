@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm"
 import {
   index,
   integer,
@@ -85,4 +84,5 @@ export const usageResets = sqliteTable(
 )
 
 // Avoid unused-import lint when sql template not referenced elsewhere
-export const _sqlTag = sql
+
+export { sql as _sqlTag } from "drizzle-orm"

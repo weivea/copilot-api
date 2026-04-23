@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import {
-  generateToken,
-  hashToken,
-  prefixOf,
-} from "../src/lib/auth-token-utils"
+import { generateToken, hashToken, prefixOf } from "../src/lib/auth-token-utils"
 
 describe("auth-token-utils", () => {
   test("generateToken returns cpk-<64 hex>", () => {
@@ -25,7 +21,8 @@ describe("auth-token-utils", () => {
 
   test("prefixOf returns first 8 + ... + last 4 of suffix", () => {
     // cpk- + 64 hex = 68 chars
-    const tok = "cpk-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
+    const tok =
+      "cpk-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"
     expect(prefixOf(tok)).toBe("cpk-0123...abcd")
   })
 })

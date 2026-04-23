@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
-import { createAuthToken, getAuthTokenById, listAuthTokens } from "../src/db/queries/auth-tokens"
+import {
+  createAuthToken,
+  getAuthTokenById,
+  listAuthTokens,
+} from "../src/db/queries/auth-tokens"
 import { createSession } from "../src/db/queries/sessions"
 import { hashToken } from "../src/lib/auth-token-utils"
-import { adminTokensRoutes } from "../src/routes/admin/tokens"
 import { state } from "../src/lib/state"
+import { adminTokensRoutes } from "../src/routes/admin/tokens"
 import { makeTestDb } from "./helpers/test-db"
 
-const SUPER = "cpk-super000000000000000000000000000000000000000000000000000000000000"
+const SUPER =
+  "cpk-super000000000000000000000000000000000000000000000000000000000000"
 
 beforeEach(() => {
   makeTestDb()
@@ -207,9 +212,7 @@ describe("admin tokens API", () => {
       tokenHash: "h",
       tokenPrefix: "p",
     })
-    const { setLifetimeUsed } = await import(
-      "../src/db/queries/auth-tokens"
-    )
+    const { setLifetimeUsed } = await import("../src/db/queries/auth-tokens")
     await setLifetimeUsed(id, 999)
     const res = await makeApp().request(
       `/admin/api/tokens/${id}/reset-lifetime`,

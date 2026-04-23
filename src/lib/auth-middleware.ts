@@ -3,10 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import crypto from "node:crypto"
 
 import { findAuthTokenByHash } from "~/db/queries/auth-tokens"
-import {
-  countRequestsSince,
-  sumTokensSince,
-} from "~/db/queries/request-logs"
+import { countRequestsSince, sumTokensSince } from "~/db/queries/request-logs"
 import { latestUsageReset } from "~/db/queries/usage-resets"
 import { hashToken } from "~/lib/auth-token-utils"
 import { state } from "~/lib/state"
@@ -95,10 +92,7 @@ export function authMiddleware(): MiddlewareHandler {
       const used = await sumTokensSince(row.id, since)
       if (used >= row.monthlyTokenLimit) {
         return c.json(
-          jsonError(
-            "monthly_quota_exceeded",
-            "Monthly token quota exceeded.",
-          ),
+          jsonError("monthly_quota_exceeded", "Monthly token quota exceeded."),
           429,
         )
       }
@@ -111,10 +105,7 @@ export function authMiddleware(): MiddlewareHandler {
       && row.lifetimeTokenUsed >= row.lifetimeTokenLimit
     ) {
       return c.json(
-        jsonError(
-          "account_quota_exhausted",
-          "Lifetime token quota exhausted.",
-        ),
+        jsonError("account_quota_exhausted", "Lifetime token quota exhausted."),
         403,
       )
     }

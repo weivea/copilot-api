@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
-import { createAuthToken, getAuthTokenById } from "../src/db/queries/auth-tokens"
+import {
+  createAuthToken,
+  getAuthTokenById,
+} from "../src/db/queries/auth-tokens"
 import { recentLogs } from "../src/db/queries/request-logs"
-import { recordUsage, usageRecorder } from "../src/lib/usage-recorder"
 import { state } from "../src/lib/state"
+import { recordUsage, usageRecorder } from "../src/lib/usage-recorder"
 import { makeTestDb } from "./helpers/test-db"
 
 beforeEach(() => {
@@ -26,7 +29,11 @@ describe("usage-recorder", () => {
     })
     app.use(usageRecorder())
     app.post("/v1/messages", async (c) => {
-      await recordUsage(c, { promptTokens: 3, completionTokens: 5, totalTokens: 8 })
+      await recordUsage(c, {
+        promptTokens: 3,
+        completionTokens: 5,
+        totalTokens: 8,
+      })
       return c.json({ ok: true })
     })
     const res = await app.request("/v1/messages", { method: "POST" })

@@ -253,7 +253,8 @@ async function pipeOpenAIStream(
           const parsed = JSON.parse(chunk.data)
           if (parsed?.usage) {
             usage.prompt = parsed.usage.prompt_tokens ?? usage.prompt
-            usage.completion = parsed.usage.completion_tokens ?? usage.completion
+            usage.completion =
+              parsed.usage.completion_tokens ?? usage.completion
             usage.total = parsed.usage.total_tokens ?? usage.total
           }
         } catch {

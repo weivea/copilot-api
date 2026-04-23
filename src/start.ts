@@ -6,6 +6,8 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
+import { initDb } from "./db/client"
+import { expireOldSessions } from "./db/queries/sessions"
 import { setupAuthToken } from "./lib/auth-token"
 import { loadConfig, resolveTls } from "./lib/config"
 import { ensurePaths, PATHS } from "./lib/paths"
@@ -14,8 +16,6 @@ import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { setupCopilotToken, setupGitHubToken } from "./lib/token"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
-import { initDb } from "./db/client"
-import { expireOldSessions } from "./db/queries/sessions"
 import { server } from "./server"
 
 interface RunServerOptions {
@@ -76,9 +76,12 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await cacheModels()
   await setupAuthToken()
 
-  setInterval(() => {
-    void expireOldSessions().catch(() => {})
-  }, 60 * 60 * 1000)
+  setInterval(
+    () => {
+      void expireOldSessions().catch(() => {})
+    },
+    60 * 60 * 1000,
+  )
 
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
@@ -235,7 +238,8 @@ export const start = defineCommand({
     },
     "db-path": {
       type: "string",
-      description: "Path to SQLite DB file (default ~/.local/share/copilot-api/copilot-api.db)",
+      description:
+        "Path to SQLite DB file (default ~/.local/share/copilot-api/copilot-api.db)",
     },
     "log-retention-days": {
       type: "string",

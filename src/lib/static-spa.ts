@@ -17,7 +17,9 @@ const TYPES: Record<string, string> = {
 }
 
 function contentType(filePath: string): string {
-  return TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream"
+  return (
+    TYPES[path.extname(filePath).toLowerCase()] ?? "application/octet-stream"
+  )
 }
 
 export function staticSpa(rootDir: string): MiddlewareHandler {

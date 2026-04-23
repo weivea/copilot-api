@@ -39,7 +39,10 @@ export async function countRequestsSince(
     .select({ c: sql<number>`count(*)` })
     .from(requestLogs)
     .where(
-      and(eq(requestLogs.authTokenId, tokenId), gte(requestLogs.timestamp, since)),
+      and(
+        eq(requestLogs.authTokenId, tokenId),
+        gte(requestLogs.timestamp, since),
+      ),
     )
   return rows[0]?.c ?? 0
 }
@@ -53,7 +56,10 @@ export async function sumTokensSince(
     .select({ s: sql<number>`coalesce(sum(${requestLogs.totalTokens}), 0)` })
     .from(requestLogs)
     .where(
-      and(eq(requestLogs.authTokenId, tokenId), gte(requestLogs.timestamp, since)),
+      and(
+        eq(requestLogs.authTokenId, tokenId),
+        gte(requestLogs.timestamp, since),
+      ),
     )
   return rows[0]?.s ?? 0
 }
@@ -82,9 +88,9 @@ export async function recentLogs(opts: {
     .orderBy(desc(requestLogs.timestamp))
     .limit(opts.limit)
   const filtered =
-    opts.tokenId !== undefined
-      ? q.where(eq(requestLogs.authTokenId, opts.tokenId))
-      : q
+    opts.tokenId !== undefined ?
+      q.where(eq(requestLogs.authTokenId, opts.tokenId))
+    : q
   return (await filtered) as Array<RecentLog>
 }
 
@@ -121,8 +127,9 @@ export async function timeseriesByBucket(opts: {
     conditions.push(eq(requestLogs.authTokenId, opts.tokenId))
   }
   const splitByToken = opts.tokenId === "all"
-  const rows = splitByToken
-    ? await db
+  const rows =
+    splitByToken ?
+      await db
         .select({
           bucketStart: bucketExpr,
           requests: sql<number>`count(*)`,

@@ -4,8 +4,8 @@ import { Hono } from "hono"
 import { createAuthToken } from "../src/db/queries/auth-tokens"
 import { insertRequestLog } from "../src/db/queries/request-logs"
 import { createSession } from "../src/db/queries/sessions"
-import { adminUsageRoutes } from "../src/routes/admin/usage"
 import { state } from "../src/lib/state"
+import { adminUsageRoutes } from "../src/routes/admin/usage"
 import { makeTestDb } from "./helpers/test-db"
 
 beforeEach(() => {

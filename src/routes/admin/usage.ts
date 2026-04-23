@@ -1,10 +1,7 @@
 import { Hono } from "hono"
 import { z } from "zod"
 
-import {
-  getAuthTokenById,
-  listAuthTokens,
-} from "~/db/queries/auth-tokens"
+import { getAuthTokenById, listAuthTokens } from "~/db/queries/auth-tokens"
 import {
   countRequestsSince,
   recentLogs,
@@ -65,10 +62,7 @@ function resolveTokenId(
       ),
     }
   }
-  if (
-    role === "user"
-    && (sessionTokenId === null || sessionTokenId !== id)
-  ) {
+  if (role === "user" && (sessionTokenId === null || sessionTokenId !== id)) {
     return {
       error: c.json(
         {
@@ -169,10 +163,7 @@ adminUsageRoutes.get("/per-token", async (c) => {
     )
   }
   const from = Number.parseInt(c.req.query("from") ?? "0", 10)
-  const to = Number.parseInt(
-    c.req.query("to") ?? String(Date.now() + 1),
-    10,
-  )
+  const to = Number.parseInt(c.req.query("to") ?? String(Date.now() + 1), 10)
   const rows = await listAuthTokens()
   const out = []
   for (const r of rows) {
@@ -184,9 +175,9 @@ adminUsageRoutes.get("/per-token", async (c) => {
       requests,
       tokens,
       monthly_pct:
-        r.monthlyTokenLimit && r.monthlyTokenLimit > 0
-          ? Math.min(100, Math.round((tokens / r.monthlyTokenLimit) * 100))
-          : null,
+        r.monthlyTokenLimit && r.monthlyTokenLimit > 0 ?
+          Math.min(100, Math.round((tokens / r.monthlyTokenLimit) * 100))
+        : null,
       last_used_at: r.lastUsedAt,
     })
     void to

@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import consola from "consola"
 
 export function redactKeyParam(url: string): string {
-  return url.replace(/([?&])key=[^&]*/g, "$1key=REDACTED")
+  return url.replaceAll(/([?&])key=[^&]*/g, "$1key=REDACTED")
 }
 
 export function redactingLogger(): MiddlewareHandler {

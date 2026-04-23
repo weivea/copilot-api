@@ -2,14 +2,8 @@ import type { Context, MiddlewareHandler } from "hono"
 
 import consola from "consola"
 
-import {
-  incrementLifetimeUsed,
-  touchLastUsed,
-} from "~/db/queries/auth-tokens"
-import {
-  insertRequestLog,
-  maybePruneOldLogs,
-} from "~/db/queries/request-logs"
+import { incrementLifetimeUsed, touchLastUsed } from "~/db/queries/auth-tokens"
+import { insertRequestLog, maybePruneOldLogs } from "~/db/queries/request-logs"
 import { state } from "~/lib/state"
 
 interface PendingUsage {
@@ -57,7 +51,7 @@ export function usageRecorder(): MiddlewareHandler {
       status = 500
       throw err
     } finally {
-      const tokenId = c.get("authTokenId") as number | undefined
+      const tokenId = c.get("authTokenId")
       if (tokenId !== undefined) {
         const pending = (c.get(STORE) as PendingUsage | undefined) ?? {}
         const ts = Date.now()

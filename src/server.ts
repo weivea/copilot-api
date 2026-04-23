@@ -1,7 +1,6 @@
-import path from "node:path"
-
 import { Hono } from "hono"
 import { cors } from "hono/cors"
+import path from "node:path"
 
 import { authMiddleware } from "./lib/auth-middleware"
 import { redactingLogger } from "./lib/redacting-logger"

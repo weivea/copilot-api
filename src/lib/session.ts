@@ -2,12 +2,12 @@ import type { Context, MiddlewareHandler } from "hono"
 
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 
+import { getAuthTokenById } from "~/db/queries/auth-tokens"
 import {
   createSession,
   deleteSession,
   getSessionById,
 } from "~/db/queries/sessions"
-import { getAuthTokenById } from "~/db/queries/auth-tokens"
 
 export const SESSION_COOKIE = "cpk_session"
 
@@ -91,7 +91,9 @@ export function sessionMiddleware(
     }
     if (options.requireRole === "super" && session.role !== "super") {
       return c.json(
-        { error: { type: "permission_denied", message: "Super admin required" } },
+        {
+          error: { type: "permission_denied", message: "Super admin required" },
+        },
         403,
       )
     }

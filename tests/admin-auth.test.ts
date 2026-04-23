@@ -3,12 +3,13 @@ import { Hono } from "hono"
 
 import { createAuthToken } from "../src/db/queries/auth-tokens"
 import { hashToken } from "../src/lib/auth-token-utils"
-import { adminAuthRoutes } from "../src/routes/admin/auth"
 import { sessionMiddleware } from "../src/lib/session"
 import { state } from "../src/lib/state"
+import { adminAuthRoutes } from "../src/routes/admin/auth"
 import { makeTestDb } from "./helpers/test-db"
 
-const SUPER = "cpk-super000000000000000000000000000000000000000000000000000000000000"
+const SUPER =
+  "cpk-super000000000000000000000000000000000000000000000000000000000000"
 
 beforeEach(() => {
   makeTestDb()
@@ -52,7 +53,8 @@ describe("admin auth", () => {
   })
 
   test("login with DB user token", async () => {
-    const tokenPlain = "cpk-user0000000000000000000000000000000000000000000000000000000000000"
+    const tokenPlain =
+      "cpk-user0000000000000000000000000000000000000000000000000000000000000"
     await createAuthToken({
       name: "alice",
       tokenHash: hashToken(tokenPlain),
@@ -69,7 +71,8 @@ describe("admin auth", () => {
   })
 
   test("login with DB admin token", async () => {
-    const tokenPlain = "cpk-admin000000000000000000000000000000000000000000000000000000000000"
+    const tokenPlain =
+      "cpk-admin000000000000000000000000000000000000000000000000000000000000"
     await createAuthToken({
       name: "bob",
       tokenHash: hashToken(tokenPlain),

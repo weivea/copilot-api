@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
-import { authMiddleware } from "../src/lib/auth-middleware"
 import { createAuthToken } from "../src/db/queries/auth-tokens"
 import { insertRequestLog } from "../src/db/queries/request-logs"
+import { authMiddleware } from "../src/lib/auth-middleware"
 import { hashToken } from "../src/lib/auth-token-utils"
 import { state } from "../src/lib/state"
 import { makeTestDb } from "./helpers/test-db"
 
-const SUPER = "cpk-super000000000000000000000000000000000000000000000000000000000000"
+const SUPER =
+  "cpk-super000000000000000000000000000000000000000000000000000000000000"
 
 beforeEach(() => {
   makeTestDb()
@@ -37,7 +38,8 @@ describe("authMiddleware (multi)", () => {
   })
 
   test("DB token passes and sets c.authTokenId", async () => {
-    const tokenPlain = "cpk-userusr00000000000000000000000000000000000000000000000000000000"
+    const tokenPlain =
+      "cpk-userusr00000000000000000000000000000000000000000000000000000000"
     const id = await createAuthToken({
       name: "u",
       tokenHash: hashToken(tokenPlain),
@@ -52,7 +54,8 @@ describe("authMiddleware (multi)", () => {
   })
 
   test("disabled DB token returns 401", async () => {
-    const tokenPlain = "cpk-dis0000000000000000000000000000000000000000000000000000000000000"
+    const tokenPlain =
+      "cpk-dis0000000000000000000000000000000000000000000000000000000000000"
     const id = await createAuthToken({
       name: "u",
       tokenHash: hashToken(tokenPlain),
@@ -68,7 +71,8 @@ describe("authMiddleware (multi)", () => {
   })
 
   test("RPM limit returns 429", async () => {
-    const tokenPlain = "cpk-rpm0000000000000000000000000000000000000000000000000000000000000"
+    const tokenPlain =
+      "cpk-rpm0000000000000000000000000000000000000000000000000000000000000"
     const id = await createAuthToken({
       name: "u",
       tokenHash: hashToken(tokenPlain),
@@ -91,7 +95,8 @@ describe("authMiddleware (multi)", () => {
   })
 
   test("monthly limit returns 429", async () => {
-    const tokenPlain = "cpk-mon0000000000000000000000000000000000000000000000000000000000000"
+    const tokenPlain =
+      "cpk-mon0000000000000000000000000000000000000000000000000000000000000"
     const id = await createAuthToken({
       name: "u",
       tokenHash: hashToken(tokenPlain),
@@ -118,7 +123,8 @@ describe("authMiddleware (multi)", () => {
   })
 
   test("lifetime limit returns 403", async () => {
-    const tokenPlain = "cpk-lif0000000000000000000000000000000000000000000000000000000000000"
+    const tokenPlain =
+      "cpk-lif0000000000000000000000000000000000000000000000000000000000000"
     const id = await createAuthToken({
       name: "u",
       tokenHash: hashToken(tokenPlain),
