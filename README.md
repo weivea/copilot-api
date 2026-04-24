@@ -98,15 +98,18 @@ bun run start      # 生产模式启动
 # 或：bun run dev   # 开发模式（带 watch）
 ```
 
-启动后控制台会输出两个 URL：
+启动后控制台会分别输出 dashboard 地址与超管 token：
 
 ```
 🌐 Usage Viewer: 旧版静态 viewer（外部 GitHub Pages）
-📊 Dashboard:    http://localhost:4141/?key=cpk-xxx...   ← 新内置后台
+📊 Dashboard ready
+  URL:   http://localhost:4141/
+  Token: see the "Super admin token" line above, or rerun with --show-token
+  Open the URL, then paste the token into the login form.
 ```
 
 > 首次启动时，需在浏览器完成一次 GitHub OAuth 设备码授权（Copilot 登录）。完成后 token 持久化到 `~/.local/share/copilot-api/`，之后启动即静默。
-> 同时会自动生成超管 token 写入 `~/.local/share/copilot-api/auth_token`，并在 banner 中显示，用于登录 dashboard 与作为 API 鉴权 Bearer token。
+> 同时会自动生成超管 token 写入 `~/.local/share/copilot-api/auth_token`。首次生成时（或后续启动加 `--show-token`）会打印完整 token 到 banner 中，可复制后粘贴到 dashboard 登录表单，也可直接用作 API 鉴权 Bearer token。
 
 ### 其他常用一键脚本
 
@@ -239,15 +242,15 @@ curl http://localhost:4141/v1/messages \
 
 ### 进入 Dashboard
 
-启动后 banner 中会包含：
+启动后 banner 中会分别给出 dashboard 地址和（首次或 `--show-token` 时）超管 token：
 
 ```
-📊 Dashboard: http://localhost:4141/?key=cpk-xxxxxxxx...
+📊 Dashboard ready
+  URL:   http://localhost:4141/
+  Token: see the "Super admin token" line above, or rerun with --show-token
 ```
 
-直接点击该链接即可自动登录 super；首屏会把 `?key=` 从 URL 中清除并写入 HttpOnly Cookie。后续 reload 不需要再带 token。
-
-也可以打开 `http://localhost:4141/` 手动输入任意 token 登录。
+打开 `http://localhost:4141/`，把超管 token 粘贴到登录表单提交即可。出于安全考虑，token 不再通过 URL 查询参数传递（避免泄露到浏览器历史、shell 历史与 HTTP Referer header）。登录成功后 session 写入 HttpOnly Cookie，后续 reload 不需要再次输入。
 
 ## 数据库
 
