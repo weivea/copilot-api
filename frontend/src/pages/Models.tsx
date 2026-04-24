@@ -58,11 +58,12 @@ export function Models() {
     let rows = models.filter((m) => {
       if (vendor && m.vendor !== vendor) return false
       if (!f) return true
+      const family = m.capabilities?.family ?? ""
       return (
         m.id.toLowerCase().includes(f)
         || m.name.toLowerCase().includes(f)
         || m.vendor.toLowerCase().includes(f)
-        || m.capabilities.family.toLowerCase().includes(f)
+        || family.toLowerCase().includes(f)
       )
     })
     rows = [...rows].sort((a, b) => {
@@ -72,14 +73,14 @@ export function Models() {
         }
         case "context": {
           return (
-            (b.capabilities.limits.max_context_window_tokens ?? 0)
-            - (a.capabilities.limits.max_context_window_tokens ?? 0)
+            (b.capabilities?.limits?.max_context_window_tokens ?? 0)
+            - (a.capabilities?.limits?.max_context_window_tokens ?? 0)
           )
         }
         case "output": {
           return (
-            (b.capabilities.limits.max_output_tokens ?? 0)
-            - (a.capabilities.limits.max_output_tokens ?? 0)
+            (b.capabilities?.limits?.max_output_tokens ?? 0)
+            - (a.capabilities?.limits?.max_output_tokens ?? 0)
           )
         }
         default: {
@@ -179,21 +180,22 @@ export function Models() {
               </td>
               <td>{m.name}</td>
               <td>{m.vendor}</td>
-              <td>{m.capabilities.family}</td>
+              <td>{m.capabilities?.family ?? "—"}</td>
               <td style={{ textAlign: "right" }}>
-                {formatNumber(m.capabilities.limits.max_context_window_tokens)}
+                {formatNumber(m.capabilities?.limits?.max_context_window_tokens)}
               </td>
               <td style={{ textAlign: "right" }}>
-                {formatNumber(m.capabilities.limits.max_output_tokens)}
+                {formatNumber(m.capabilities?.limits?.max_output_tokens)}
               </td>
               <td>
                 <div className="models-badges">
-                  {badge(m.capabilities.type, "muted")}
+                  {m.capabilities?.type && badge(m.capabilities.type, "muted")}
                   {m.preview && badge("preview", "warn")}
-                  {m.capabilities.supports.tool_calls && badge("tools", "ok")}
-                  {m.capabilities.supports.parallel_tool_calls
+                  {m.capabilities?.supports?.tool_calls
+                    && badge("tools", "ok")}
+                  {m.capabilities?.supports?.parallel_tool_calls
                     && badge("parallel", "ok")}
-                  {m.capabilities.supports.dimensions
+                  {m.capabilities?.supports?.dimensions
                     && badge("dimensions", "ok")}
                   {!m.model_picker_enabled && badge("hidden", "muted")}
                 </div>

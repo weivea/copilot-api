@@ -103,18 +103,18 @@ export interface ModelInfo {
   preview: boolean
   model_picker_enabled: boolean
   object: string
-  capabilities: {
-    family: string
-    object: string
-    tokenizer: string
-    type: string
-    limits: {
+  capabilities?: {
+    family?: string
+    object?: string
+    tokenizer?: string
+    type?: string
+    limits?: {
       max_context_window_tokens?: number
       max_output_tokens?: number
       max_prompt_tokens?: number
       max_inputs?: number
     }
-    supports: {
+    supports?: {
       tool_calls?: boolean
       parallel_tool_calls?: boolean
       dimensions?: boolean
