@@ -19,6 +19,9 @@ export function Layout({ children }: { children: ReactNode }) {
           {me.role !== "user" && <NavLink to="/tokens">Tokens</NavLink>}
           <NavLink to="/usage">Usage</NavLink>
           <NavLink to="/settings">Settings</NavLink>
+          {me.role === "super" && (
+            <NavLink to="/github-auth">GitHub Auth</NavLink>
+          )}
         </nav>
         <div className="spacer" />
         <button onClick={() => void logout()}>Logout</button>

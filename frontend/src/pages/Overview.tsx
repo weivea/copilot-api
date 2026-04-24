@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
+import { Link } from "react-router-dom"
 
-import type { UsageSummary } from "../types"
+import type { GithubAuthStatus, UsageSummary } from "../types"
 
 import { api } from "../api/client"
 import { useAuth } from "../contexts/AuthContext"
@@ -23,6 +24,7 @@ export function Overview() {
   const { me } = useAuth()
   const [s, setS] = useState<UsageSummary | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [gh, setGh] = useState<GithubAuthStatus | null>(null)
 
   useEffect(() => {
     if (!me) return
@@ -36,12 +38,30 @@ export function Overview() {
       .catch((e) => setErr((e as Error).message))
   }, [me])
 
+  useEffect(() => {
+    api
+      .githubStatus()
+      .then(setGh)
+      .catch(() => setGh(null))
+  }, [])
+
+  const banner =
+    gh && !gh.copilotReady ?
+      <div className="banner banner--warn">
+        GitHub not connected — Copilot endpoints disabled.{" "}
+        {me?.role === "super" ?
+          <Link to="/github-auth">Sign in</Link>
+        : <span>Contact a super admin.</span>}
+      </div>
+    : null
+
   if (!me) return null
   if (err) return <div className="error">{err}</div>
   if (!s) return <div>Loading…</div>
 
   return (
     <div>
+      {banner}
       <h2>Overview</h2>
       <div className="cards">
         <Card

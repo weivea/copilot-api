@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom"
 
 import { Layout } from "./components/Layout"
 import { useAuth } from "./contexts/AuthContext"
+import { GithubAuth } from "./pages/GithubAuth"
 import { Login } from "./pages/Login"
 import { Overview } from "./pages/Overview"
 import { Settings } from "./pages/Settings"
@@ -27,6 +28,14 @@ export function App() {
         />
         <Route path="/usage" element={<Usage />} />
         <Route path="/settings" element={<Settings />} />
+        <Route
+          path="/github-auth"
+          element={
+            me.role === "super" ?
+              <GithubAuth />
+            : <Navigate to="/overview" replace />
+          }
+        />
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Routes>
     </Layout>
