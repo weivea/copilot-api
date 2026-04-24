@@ -88,4 +88,7 @@ tr:last-child td { border-bottom: 0; }
 .models-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.04em; }
 .models-badge--ok { color: var(--ok); border-color: var(--ok); }
 .models-badge--warn { color: #f0a020; border-color: #f0a020; }
+.models-badge--info { color: var(--accent); border-color: var(--accent); }
 .models-badge--muted { color: var(--muted); }
+.models-toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
+.models-toggle input { margin: 0; }

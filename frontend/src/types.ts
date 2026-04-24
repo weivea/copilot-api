@@ -102,22 +102,37 @@ export interface ModelInfo {
   version: string
   preview: boolean
   model_picker_enabled: boolean
+  model_picker_category?: "powerful" | "versatile" | "lightweight"
   object: string
+  supported_endpoints?: Array<string>
   capabilities?: {
     family?: string
     object?: string
     tokenizer?: string
-    type?: string
+    type?: "chat" | "embeddings" | "completion" | string
     limits?: {
       max_context_window_tokens?: number
       max_output_tokens?: number
+      max_non_streaming_output_tokens?: number
       max_prompt_tokens?: number
       max_inputs?: number
+      vision?: {
+        max_prompt_image_size?: number
+        max_prompt_images?: number
+        supported_media_types?: Array<string>
+      }
     }
     supports?: {
       tool_calls?: boolean
       parallel_tool_calls?: boolean
+      streaming?: boolean
+      structured_outputs?: boolean
+      vision?: boolean
       dimensions?: boolean
+      adaptive_thinking?: boolean
+      max_thinking_budget?: number
+      min_thinking_budget?: number
+      reasoning_effort?: Array<string>
     }
   }
   policy?: { state: string; terms: string }
