@@ -1,101 +1,282 @@
 # Copilot API Proxy
 
 > [!WARNING]
-> This is a reverse-engineered proxy of GitHub Copilot API. It is not supported by GitHub, and may break unexpectedly. Use at your own risk.
+> 本项目是对 GitHub Copilot API 的逆向代理实现，**并非 GitHub 官方支持**，可能因上游变动而随时失效。请自行评估风险。
 
 > [!WARNING]
-> **GitHub Security Notice:**  
-> Excessive automated or scripted use of Copilot (including rapid or bulk requests, such as via automated tools) may trigger GitHub's abuse-detection systems.  
-> You may receive a warning from GitHub Security, and further anomalous activity could result in temporary suspension of your Copilot access.
+> **GitHub 安全提示：**
+> 过度的自动化或脚本化使用 Copilot（例如高频或批量请求）可能触发 GitHub 的滥用检测系统。
+> 你可能会收到 GitHub Security 的警告，进一步的异常活动甚至可能导致 Copilot 访问被临时封禁。
 >
-> GitHub prohibits use of their servers for excessive automated bulk activity or any activity that places undue burden on their infrastructure.
+> GitHub 禁止将其服务器用于任何过度的自动化批量活动或对其基础设施造成不当负担的行为。
 >
-> Please review:
+> 请阅读：
 >
 > - [GitHub Acceptable Use Policies](https://docs.github.com/site-policy/acceptable-use-policies/github-acceptable-use-policies#4-spam-and-inauthentic-activity-on-github)
 > - [GitHub Copilot Terms](https://docs.github.com/site-policy/github-terms/github-terms-for-additional-products-and-features#github-copilot)
 >
-> Use this proxy responsibly to avoid account restrictions.
-
-
----
-
-**Note:** If you are using [opencode](https://github.com/sst/opencode), you do not need this project. Opencode supports GitHub Copilot provider out of the box.
+> 请负责任地使用本代理，避免账号被限制。
 
 ---
 
-## Project Overview
+**提示：** 如果你已经在使用 [opencode](https://github.com/sst/opencode)，则不需要本项目 —— opencode 原生支持 GitHub Copilot Provider。
 
-A reverse-engineered proxy for the GitHub Copilot API that exposes it as an OpenAI and Anthropic compatible service. This allows you to use GitHub Copilot with any tool that supports the OpenAI Chat Completions API or the Anthropic Messages API, including to power [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview).
+---
 
-## Features
+## 项目简介
 
-- **OpenAI & Anthropic Compatibility**: Exposes GitHub Copilot as an OpenAI-compatible (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`) and Anthropic-compatible (`/v1/messages`) API.
-- **Claude Code Integration**: Easily configure and launch [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) to use Copilot as its backend with a simple command-line flag (`--claude-code`).
-- **Usage Dashboard**: A web-based dashboard to monitor your Copilot API usage, view quotas, and see detailed statistics.
-- **Rate Limit Control**: Manage API usage with rate-limiting options (`--rate-limit`) and a waiting mechanism (`--wait`) to prevent errors from rapid requests.
-- **Manual Request Approval**: Manually approve or deny each API request for fine-grained control over usage (`--manual`).
-- **Token Visibility**: Option to display GitHub and Copilot tokens during authentication and refresh for debugging (`--show-token`).
-- **API Auth Token**: Protect your proxy with an auto-generated API key. Supports both `Authorization: Bearer` and `x-api-key` headers for OpenAI and Anthropic client compatibility. Enabled by default; disable with `--no-auth`.
-- **Flexible Authentication**: Authenticate interactively or provide a GitHub token directly, suitable for CI/CD environments.
-- **Support for Different Account Types**: Works with individual, business, and enterprise GitHub Copilot plans.
-- **HTTPS / TLS Support**: Serve over HTTPS with your own TLS certificates. Includes built-in certbot integration for easy Let's Encrypt certificate management.
+一个对 GitHub Copilot API 的逆向代理，将其暴露为 **OpenAI 兼容**和 **Anthropic 兼容**的服务。任何支持 OpenAI Chat Completions API 或 Anthropic Messages API 的工具都可以通过本项目以 GitHub Copilot 作为后端，包括驱动 [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)。
+
+本分支在原项目基础上新增了**多 token 鉴权**和**带角色权限的 Web 管理后台**，可在团队/共享部署场景下精细化控制每个使用方的额度与可见性。
+
+## 功能特性
+
+### 兼容性 & 客户端集成
+- **OpenAI & Anthropic 双兼容**：同时暴露 OpenAI 风格 (`/v1/chat/completions`、`/v1/models`、`/v1/embeddings`) 和 Anthropic 风格 (`/v1/messages`、`/v1/messages/count_tokens`) 接口。
+- **Claude Code 集成**：通过 `--claude-code` 一键生成可直接粘贴的环境变量启动命令。
+- **多账号类型支持**：individual / business / enterprise 三种 GitHub Copilot 计划均可使用。
+
+### 多 token 鉴权与配额（新）
+- **三级角色模型**：`super`（超级管理员，文件存储）/ `admin`（管理员，可管理普通 token）/ `user`（仅可查看自身）。
+- **token 持久化**：除文件保存的超管 token 外，新增 token 通过 SQLite 存储，仅哈希落库（SHA-256，常量时间比对）。
+- **每 token 配额**：可配置 RPM、月度 token 上限、终身 token 上限；命中上限时返回带类型的 `429`/`403` JSON 错误。
+- **使用计量**：每次请求记录 endpoint、状态码、模型、prompt/completion/total tokens、延迟；支持 1% 概率的过期日志清理。
+- **会话隔离**：管理后台使用 HttpOnly Lax Cookie，删除/禁用某 token 会级联清理其会话。
+
+### Web Dashboard（新）
+- **静态 SPA**：基于 React + Vite + Recharts，构建产物随 `bun run build` 一并生成，由后端直接托管。
+- **登录 / 我 / 退出**：`POST /admin/api/login`、`GET /admin/api/me`、`POST /admin/api/logout`，支持 1 / 7 / 30 天 TTL。
+- **Token 管理页**：列表、创建（明文仅显示一次）、改名/限额、禁用、删除、月度/终身计数重置（按角色限制操作）。
+- **Usage 页**：按 Me / 全部 / 单 token 切换；支持 hour/day/week/month 桶、Recharts 趋势图、最近请求列表、按 token 汇总。
+- **Overview 页**：今日请求 / 今日 token / 月度 / 终身 卡片。
+- **Settings 页**：浏览器本地保存默认会话 TTL。
+
+### 运维 & 安全
+- **请求日志脱敏**：自带 `redactingLogger` 中间件，自动把 URL 中的 `?key=…` 替换为 `key=REDACTED`。
+- **TLS / HTTPS**：内置 certbot 集成，可一键 obtain/renew Let's Encrypt 证书。
+- **本地存储 0600**：超管 token、SQLite 文件均以受限权限存储于 `~/.local/share/copilot-api/`。
+- **CLI 速率控制**：`--rate-limit`、`--wait`、`--manual` 与多 token 配额并存。
 
 ## Demo
 
 https://github.com/user-attachments/assets/7654b383-669d-4eb9-b23c-06d7aefee8c5
 
-## Prerequisites
+## 环境要求
 
-- Bun (>= 1.2.x)
-- GitHub account with Copilot subscription (individual, business, or enterprise)
+- [Bun](https://bun.com/) ≥ 1.2.x
+- 可用的 GitHub Copilot 订阅（individual / business / enterprise）
 
-## Installation
-
-To install dependencies, run:
+## 安装
 
 ```sh
 bun install
 ```
 
-## Using with Docker
-
-### Prerequisites
-
-Before running in Docker, you need a GitHub token. Run the auth flow on a machine with a browser:
+构建（包含前端 dashboard）：
 
 ```sh
-# Option 1: Run auth locally (requires Bun)
+bun run build
+# 产物：dist/main.js + dist/public/{index.html, assets/...}
+```
+
+## 快速开始
+
+```sh
+# 开发模式（带 watch）
+bun run dev
+
+# 生产模式
+bun run start
+
+# 启动后控制台会输出两个 URL：
+#   🌐 Usage Viewer: 旧版静态 viewer（外部 GitHub Pages）
+#   📊 Dashboard:    http://localhost:4141/?key=cpk-xxx...   ← 新内置后台
+```
+
+第一次启动时，会自动生成超管 token 写入 `~/.local/share/copilot-api/auth_token`，并在 banner 中显示，供你登录 dashboard 与作为 API 鉴权 Bearer token 使用。
+
+## CLI 命令
+
+| 子命令 | 用途 |
+| --- | --- |
+| `start` | 启动 Copilot API 服务 + Dashboard（必要时触发 GitHub OAuth） |
+| `auth` | 仅运行 GitHub OAuth 设备流，生成 `github_token` 后退出 |
+| `auth-token` | 查看或重新生成超管 token（旧版兼容） |
+| `check-usage` | 在终端打印当前 GitHub Copilot 使用 / 配额 |
+| `debug` | 输出版本、运行时、文件路径、鉴权状态等诊断信息 |
+
+### `start` 命令选项
+
+| 选项 | 说明 | 默认值 | 别名 |
+| --- | --- | --- | --- |
+| `--port` | 监听端口 | `4141` | `-p` |
+| `--verbose` | 启用详细日志 | `false` | `-v` |
+| `--account-type` | 账号类型（individual / business / enterprise） | `individual` | `-a` |
+| `--manual` | 每个请求手动确认 | `false` | — |
+| `--rate-limit` | 请求间最小间隔（秒） | — | `-r` |
+| `--wait` | 命中速率限制时等待而非报错 | `false` | `-w` |
+| `--github-token` | 直接传入 GitHub token | — | `-g` |
+| `--claude-code` | 生成启动 Claude Code 的环境变量命令 | `false` | `-c` |
+| `--show-token` | 在日志中打印 GitHub / Copilot token | `false` | — |
+| `--no-auth` | 关闭鉴权（同时禁用 dashboard） | `false` | — |
+| `--proxy-env` | 从环境变量初始化 HTTP/HTTPS 代理 | `false` | — |
+| `--tls-cert` | TLS 证书路径（PEM） | — | — |
+| `--tls-key` | TLS 私钥路径（PEM） | — | — |
+| `--db-path` | SQLite 数据库文件路径 | `~/.local/share/copilot-api/copilot-api.db` | — |
+| `--log-retention-days` | `request_logs` 保留天数 | `90` | — |
+| `--no-dashboard` | 禁用 Dashboard 与 `/admin/api` 路由 | `false`（默认启用） | — |
+
+### `auth-token` 命令选项
+
+| 选项 | 说明 | 默认值 |
+| --- | --- | --- |
+| `--regenerate` | 强制重建超管 token | `false` |
+
+### `auth` 命令选项
+
+| 选项 | 说明 | 默认值 | 别名 |
+| --- | --- | --- | --- |
+| `--verbose` | 启用详细日志 | `false` | `-v` |
+| `--show-token` | 输出生成的 GitHub token | `false` | — |
+
+### `debug` 命令选项
+
+| 选项 | 说明 | 默认值 |
+| --- | --- | --- |
+| `--json` | 以 JSON 输出 | `false` |
+
+## API 端点
+
+### OpenAI 兼容
+
+| 端点 | 方法 | 描述 |
+| --- | --- | --- |
+| `/v1/chat/completions` | `POST` | 创建聊天补全 |
+| `/v1/models` | `GET` | 列出可用模型 |
+| `/v1/embeddings` | `POST` | 创建 embedding 向量 |
+
+> 不带 `/v1` 前缀的同名路径也可用（`/chat/completions`、`/models`、`/embeddings`）。
+
+### Anthropic 兼容
+
+| 端点 | 方法 | 描述 |
+| --- | --- | --- |
+| `/v1/messages` | `POST` | 创建 message 响应 |
+| `/v1/messages/count_tokens` | `POST` | 计算消息 token 数 |
+
+### 上游用量信息
+
+| 端点 | 方法 | 描述 |
+| --- | --- | --- |
+| `/usage` | `GET` | 获取 Copilot 上游配额详情 |
+| `/token` | `GET` | 返回当前正在使用的 Copilot token |
+
+### Admin / Dashboard API（新）
+
+均位于 `/admin/api/*`，由 `sessionMiddleware` 守卫，使用 `cpk_session` Cookie 鉴权。
+
+| 端点 | 方法 | 角色 | 描述 |
+| --- | --- | --- | --- |
+| `/admin/api/login` | `POST` | 任意 token | 用 token 登录，发放会话 Cookie。Body: `{ "key": "cpk-...", "ttl_days": 1 \| 7 \| 30 }` |
+| `/admin/api/logout` | `POST` | 任意 | 撤销当前会话 |
+| `/admin/api/me` | `GET` | 任意 | 返回当前会话角色 / 名称 / token id |
+| `/admin/api/tokens` | `GET` | admin / super | 列出所有 token（不返回 hash 与明文） |
+| `/admin/api/tokens` | `POST` | admin / super | 创建 token；明文**仅一次性返回** |
+| `/admin/api/tokens/:id` | `PATCH` | admin / super | 改名 / 限额 / 启停（admin 不能改另一 admin） |
+| `/admin/api/tokens/:id` | `DELETE` | admin / super | 删除 token + 级联会话 |
+| `/admin/api/tokens/:id/reset-monthly` | `POST` | admin / super | 重置月度计数 |
+| `/admin/api/tokens/:id/reset-lifetime` | `POST` | super only | 清零终身计数 |
+| `/admin/api/usage/summary` | `GET` | 任意 | 用量汇总，`token_id=me \| all \| <id>` |
+| `/admin/api/usage/timeseries` | `GET` | 任意（user 仅自己） | 时序数据，需 `from`、`to`、`bucket=hour\|day\|week\|month` |
+| `/admin/api/usage/per-token` | `GET` | admin / super | 按 token 汇总 |
+| `/admin/api/usage/recent` | `GET` | 任意（user 仅自己） | 最近 N 条请求记录 |
+
+错误响应统一为 `{"error": {"type": "...", "message": "..."}}`，错误类型包括：`auth_error`、`rate_limit_exceeded`、`monthly_quota_exceeded`、`account_quota_exhausted`、`permission_denied`、`bad_request`、`not_found`、`dashboard_disabled`。
+
+## 鉴权与 Token 模型
+
+### 三种角色
+
+| 角色 | 来源 | 默认能力 |
+| --- | --- | --- |
+| `super` | 文件 `~/.local/share/copilot-api/auth_token`，每次启动加载 | 全部权限，含创建 admin、重置 lifetime |
+| `admin` | DB 中 `is_admin=1` 的 token | 可管理普通 token、查看全部用量；不能管理其他 admin |
+| `user` | DB 中 `is_admin=0` 的 token | 仅能查看自己的用量 |
+
+### 调用业务 API
+
+```sh
+# OpenAI 风格
+curl http://localhost:4141/v1/models \
+  -H "Authorization: Bearer cpk-your-token"
+
+# Anthropic 风格
+curl http://localhost:4141/v1/messages \
+  -H "x-api-key: cpk-your-token"
+```
+
+### 进入 Dashboard
+
+启动后 banner 中会包含：
+
+```
+📊 Dashboard: http://localhost:4141/?key=cpk-xxxxxxxx...
+```
+
+直接点击该链接即可自动登录 super；首屏会把 `?key=` 从 URL 中清除并写入 HttpOnly Cookie。后续 reload 不需要再带 token。
+
+也可以打开 `http://localhost:4141/` 手动输入任意 token 登录。
+
+## 数据库
+
+- 引擎：`bun:sqlite`，开启 WAL 与 `foreign_keys`。
+- ORM：`drizzle-orm`，迁移由 `drizzle-kit` 生成（`bun run db:generate`）。
+- 默认路径：`~/.local/share/copilot-api/copilot-api.db`（可用 `--db-path` 覆盖），文件权限 `0600`。
+- 表：
+  - `auth_tokens` — token 元数据 + 限额
+  - `request_logs` — 单次请求计量
+  - `sessions` — Cookie 会话
+  - `usage_resets` — 月度 / 终身 重置审计
+
+每次写日志后有 1% 概率触发 `pruneOldLogs`，删除超过 `--log-retention-days` 的记录；每小时还有一次 `expireOldSessions` 清理过期会话。
+
+## Docker 运行
+
+### 鉴权准备
+
+```sh
+# 方式 1：本地直接 auth
 bun run dev -- auth
 
-# Option 2: Run auth via Docker
+# 方式 2：用 Docker 临时跑 auth
 docker run -it -v ~/.local/share/copilot-api:/root/.local/share/copilot-api copilot-api --auth
 ```
 
-This will open a browser for GitHub Device Flow authorization. Once completed, the token is saved to `~/.local/share/copilot-api/github_token`.
+完成后 token 会保存到 `~/.local/share/copilot-api/github_token`。
 
-### Build Image
+### 构建镜像
 
 ```sh
 docker build -t copilot-api .
 ```
 
-### Run with Docker
+### 运行容器
 
 ```sh
-# Mount your local token directory into the container
-docker run -p 4141:4141 -v ~/.local/share/copilot-api:/root/.local/share/copilot-api copilot-api
+docker run -p 4141:4141 \
+  -v ~/.local/share/copilot-api:/root/.local/share/copilot-api \
+  copilot-api
 ```
 
-Alternatively, pass the GitHub token via environment variable:
+或通过环境变量传入 token：
 
 ```sh
-docker run -p 4141:4141 -e GH_TOKEN=ghp_your_token_here copilot-api
+docker run -p 4141:4141 -e GH_TOKEN=ghp_xxx copilot-api
 ```
 
 ### Docker Compose
 
-A `docker-compose.yml` is included in the repository:
+仓库自带 `docker-compose.yml`：
 
 ```yaml
 services:
@@ -110,256 +291,33 @@ services:
     restart: unless-stopped
 ```
 
-Usage:
-
 ```sh
-# Build and start
-docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# View the auto-generated API auth token (cpk-...)
-docker compose exec copilot-api cat /root/.local/share/copilot-api/auth_token
-
-# Stop
-docker compose down
+docker compose up -d                     # 启动
+docker compose logs -f                   # 看日志
+docker compose exec copilot-api \
+  cat /root/.local/share/copilot-api/auth_token   # 查看超管 token
+docker compose down                      # 停止
 ```
 
-You can customize the port via a `.env` file:
-
-```sh
-echo 'PORT=8080' > .env
-docker compose up -d
-```
-
-To disable API auth token verification (e.g. for internal network use):
+如果只在内网用，想关闭鉴权（同时也会关掉 dashboard）：
 
 ```yaml
 services:
   copilot-api:
-    # ... other settings ...
     command: ["--no-auth"]
 ```
 
-### Docker Image Features
+## 与 Claude Code 集成
 
-- Multi-stage build for optimized image size
-- Health check for container monitoring
-- Pinned base image version for reproducible builds
-
-## Command Structure
-
-Copilot API now uses a subcommand structure with these main commands:
-
-- `start`: Start the Copilot API server. This command will also handle authentication if needed.
-- `auth`: Run GitHub authentication flow without starting the server. This is typically used if you need to generate a token for use with the `--github-token` option, especially in non-interactive environments.
-- `auth-token`: View or regenerate the API auth token used for client authentication. The token is auto-generated on first server start and stored at `~/.local/share/copilot-api/auth_token`.
-- `check-usage`: Show your current GitHub Copilot usage and quota information directly in the terminal (no server required).
-- `debug`: Display diagnostic information including version, runtime details, file paths, and authentication status. Useful for troubleshooting and support.
-
-## Command Line Options
-
-### Start Command Options
-
-The following command line options are available for the `start` command:
-
-| Option         | Description                                                                   | Default    | Alias |
-| -------------- | ----------------------------------------------------------------------------- | ---------- | ----- |
-| --port         | Port to listen on                                                             | 4141       | -p    |
-| --verbose      | Enable verbose logging                                                        | false      | -v    |
-| --account-type | Account type to use (individual, business, enterprise)                        | individual | -a    |
-| --manual       | Enable manual request approval                                                | false      | none  |
-| --rate-limit   | Rate limit in seconds between requests                                        | none       | -r    |
-| --wait         | Wait instead of error when rate limit is hit                                  | false      | -w    |
-| --github-token | Provide GitHub token directly (must be generated using the `auth` subcommand) | none       | -g    |
-| --claude-code  | Generate a command to launch Claude Code with Copilot API config              | false      | -c    |
-| --show-token   | Show GitHub and Copilot tokens on fetch and refresh                           | false      | none  |
-| --no-auth      | Disable auth token verification                                               | false      | none  |
-| --proxy-env    | Initialize proxy from environment variables                                   | false      | none  |
-| --tls-cert     | Path to TLS certificate file (PEM format)                                     | none       | none  |
-| --tls-key      | Path to TLS private key file (PEM format)                                     | none       | none  |
-
-### Auth Token Command Options
-
-| Option       | Description                            | Default | Alias |
-| ------------ | -------------------------------------- | ------- | ----- |
-| --regenerate | Force regenerate the auth token        | false   | none  |
-
-### Auth Command Options
-
-| Option       | Description               | Default | Alias |
-| ------------ | ------------------------- | ------- | ----- |
-| --verbose    | Enable verbose logging    | false   | -v    |
-| --show-token | Show GitHub token on auth | false   | none  |
-
-### Debug Command Options
-
-| Option | Description               | Default | Alias |
-| ------ | ------------------------- | ------- | ----- |
-| --json | Output debug info as JSON | false   | none  |
-
-## API Endpoints
-
-The server exposes several endpoints to interact with the Copilot API. It provides OpenAI-compatible endpoints and now also includes support for Anthropic-compatible endpoints, allowing for greater flexibility with different tools and services.
-
-### OpenAI Compatible Endpoints
-
-These endpoints mimic the OpenAI API structure.
-
-| Endpoint                    | Method | Description                                               |
-| --------------------------- | ------ | --------------------------------------------------------- |
-| `POST /v1/chat/completions` | `POST` | Creates a model response for the given chat conversation. |
-| `GET /v1/models`            | `GET`  | Lists the currently available models.                     |
-| `POST /v1/embeddings`       | `POST` | Creates an embedding vector representing the input text.  |
-
-### Anthropic Compatible Endpoints
-
-These endpoints are designed to be compatible with the Anthropic Messages API.
-
-| Endpoint                         | Method | Description                                                  |
-| -------------------------------- | ------ | ------------------------------------------------------------ |
-| `POST /v1/messages`              | `POST` | Creates a model response for a given conversation.           |
-| `POST /v1/messages/count_tokens` | `POST` | Calculates the number of tokens for a given set of messages. |
-
-### Usage Monitoring Endpoints
-
-New endpoints for monitoring your Copilot usage and quotas.
-
-| Endpoint     | Method | Description                                                  |
-| ------------ | ------ | ------------------------------------------------------------ |
-| `GET /usage` | `GET`  | Get detailed Copilot usage statistics and quota information. |
-| `GET /token` | `GET`  | Get the current Copilot token being used by the API.         |
-
-## Example Usage
-
-Using with npx:
+### 方式 1：交互式
 
 ```sh
-# Basic usage with start command
-bun run start start
-
-# Run on custom port with verbose logging
-bun run start start --port 8080 --verbose
-
-# Use with a business plan GitHub account
-bun run start start --account-type business
-
-# Use with an enterprise plan GitHub account
-bun run start start --account-type enterprise
-
-# Enable manual approval for each request
-bun run start start --manual
-
-# Set rate limit to 30 seconds between requests
-bun run start start --rate-limit 30
-
-# Wait instead of error when rate limit is hit
-bun run start start --rate-limit 30 --wait
-
-# Provide GitHub token directly
-bun run start start --github-token ghp_YOUR_TOKEN_HERE
-
-# Run only the auth flow
-bun run start auth
-
-# Run auth flow with verbose logging
-bun run start auth --verbose
-
-# Show your Copilot usage/quota in the terminal (no server needed)
-bun run start check-usage
-
-# Display debug information for troubleshooting
-bun run debug
-
-# Display debug information in JSON format
-bun run start debug --json
-
-# View your auth token
-bun run start auth-token
-
-# Regenerate auth token
-bun run start auth-token --regenerate
-
-# Start without auth token verification
-bun run start start --no-auth
-
-# Initialize proxy from environment variables (HTTP_PROXY, HTTPS_PROXY, etc.)
-bun run start start --proxy-env
+bun run start --claude-code
 ```
 
-## Auth Token
+会让你选择主模型与 small/fast 模型，然后把启动命令复制到剪贴板，粘贴到新终端运行即可。
 
-The proxy is protected by an API auth token by default. This token must be included in every request to the proxy via the `Authorization: Bearer <token>` or `x-api-key: <token>` header.
-
-### How It Works
-
-- On first server start, a token is **auto-generated** and stored at `~/.local/share/copilot-api/auth_token`.
-- The token has the format `cpk-<hex>` (e.g. `cpk-abc123...`).
-- The token is displayed in the server startup logs.
-- To disable auth token verification, use `--no-auth` when starting the server.
-
-### Managing the Token
-
-Use the `auth-token` subcommand to view or regenerate the token:
-
-```sh
-# View the current auth token
-bun run start auth-token
-
-# Regenerate the auth token
-bun run start auth-token --regenerate
-```
-
-### Using the Token with Clients
-
-When making requests to the proxy, include the token in the request headers:
-
-```sh
-# Using Authorization header (OpenAI-style)
-curl http://localhost:4141/v1/models \
-  -H "Authorization: Bearer cpk-your-token-here"
-
-# Using x-api-key header (Anthropic-style)
-curl http://localhost:4141/v1/messages \
-  -H "x-api-key: cpk-your-token-here"
-```
-
-For Claude Code, set the token in `.claude/settings.json` as the `ANTHROPIC_AUTH_TOKEN` environment variable (see [Using with Claude Code](#using-with-claude-code)).
-
-## Using the Usage Viewer
-
-After starting the server, a URL to the Copilot Usage Dashboard will be displayed in your console. This dashboard is a web interface for monitoring your API usage.
-
-1.  Start the server. For example:
-    ```sh
-    bun run start start
-    ```
-
-
-## Using with Claude Code
-
-This proxy can be used to power [Claude Code](https://docs.anthropic.com/en/claude-code), an experimental conversational AI assistant for developers from Anthropic.
-
-There are two ways to configure Claude Code to use this proxy:
-
-### Interactive Setup with `--claude-code` flag
-
-To get started, run the `start` command with the `--claude-code` flag:
-
-```sh
-bun run start start --claude-code
-```
-
-You will be prompted to select a primary model and a "small, fast" model for background tasks. After selecting the models, a command will be copied to your clipboard. This command sets the necessary environment variables for Claude Code to use the proxy.
-
-Paste and run this command in a new terminal to launch Claude Code.
-
-### Manual Configuration with `settings.json`
-
-Alternatively, you can configure Claude Code by creating a `.claude/settings.json` file in your project's root directory. This file should contain the environment variables needed by Claude Code. This way you don't need to run the interactive setup every time.
-
-Here is an example `.claude/settings.json` file:
+### 方式 2：手写 `.claude/settings.json`
 
 ```json
 {
@@ -374,72 +332,52 @@ Here is an example `.claude/settings.json` file:
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
   "permissions": {
-    "deny": [
-      "WebSearch"
-    ]
+    "deny": ["WebSearch"]
   }
 }
 ```
 
-> **Note:** Replace `cpk-your-auth-token-here` with your actual auth token. Run `copilot-api auth-token` to view your token, or find it in the server startup logs.
-
-You can find more options here: [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings#environment-variables)
-
-You can also read more about IDE integration here: [Add Claude Code to your IDE](https://docs.anthropic.com/en/docs/claude-code/ide-integrations)
+> 用 `bun run start auth-token` 查看你的超管 token，或在启动日志里找。
+> 更多选项见 [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings#environment-variables) 与 [IDE 集成](https://docs.anthropic.com/en/docs/claude-code/ide-integrations)。
 
 ## HTTPS / TLS
 
-The server supports HTTPS via TLS certificates. You can configure TLS through CLI arguments, a config file, or both.
-
-### Prerequisites
-
-The `cert:obtain` and `cert:renew` scripts require [certbot](https://certbot.eff.org/). Install it for your platform:
+### 准备 certbot
 
 ```sh
-# Linux (Ubuntu/Debian)
-sudo apt install certbot
-
-# Linux (Fedora/RHEL)
-sudo dnf install certbot
-
+# Linux
+sudo apt install certbot          # Debian / Ubuntu
+sudo dnf install certbot          # Fedora / RHEL
 # macOS
 brew install certbot
-
-# Windows / All platforms (requires Python)
+# 跨平台
 pip install certbot
 ```
 
-> **Note:** The script will check for certbot automatically and show installation instructions if it's not found.
-
-### Quick Start
+### 一条龙签发
 
 ```sh
-# 1. Obtain a certificate (certbot must be installed on your system)
+# 1. 获取证书（会写入 .certs/ 与 copilot-api.config.json）
 bun run cert:obtain -- --domain copilot.example.com
 
-# 2. Start the server — HTTPS is automatically enabled
-bun run start start 
+# 2. 直接启动，自动启用 HTTPS
+bun run start
 ```
 
-Running `cert:obtain` will:
-- Call certbot to obtain a Let's Encrypt certificate
-- Store certificates in the project's `.certs/` directory
-- Auto-generate `copilot-api.config.json` in the project root
-
-To renew certificates:
+续期：
 
 ```sh
 bun run cert:renew
 ```
 
-### Config File
+### 配置文件
 
-The server looks for a config file in the following order:
+读取顺序：
 
-1. `copilot-api.config.json` in the current working directory (project root)
-2. `~/.local/share/copilot-api/config.json` (global)
+1. 当前目录 `copilot-api.config.json`
+2. `~/.local/share/copilot-api/config.json`
 
-Example `copilot-api.config.json` (auto-generated by `cert:obtain`):
+示例：
 
 ```json
 {
@@ -451,58 +389,45 @@ Example `copilot-api.config.json` (auto-generated by `cert:obtain`):
 }
 ```
 
-- If only `domain` is set (without `tls`), the server automatically derives certificate paths from the `.certs/` directory.
-- CLI flags `--tls-cert` and `--tls-key` take priority over the config file.
+只填 `domain` 时会按 `.certs/` 默认路径推断；CLI `--tls-cert` / `--tls-key` 优先级最高。
 
-### Manual TLS Configuration
-
-If you have your own certificates, you can skip certbot and specify them directly:
+### 手动指定证书
 
 ```sh
-# Via CLI flags
-bun run start start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
+bun run start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
 ```
 
-Or create `copilot-api.config.json` manually with your certificate paths.
+启用 TLS 后，启动日志会显示证书路径，所有 URL 自动改为 `https://`。
 
-When TLS is active, the server logs the certificate paths at startup and uses `https://` in all displayed URLs.
+## 源码运行
 
-## Running from Source
-
-The project can be run from source in several ways:
-
-### Development Mode
+### 开发
 
 ```sh
 bun run dev
 ```
 
-### Production Mode
+### 生产
 
 ```sh
-bun run start [start|auth]
+bun run start
 ```
 
-### Running as a Background Process (Linux)
+### 后台运行（Linux）
 
-Use the provided scripts in the `scripts/` directory:
+仓库 `scripts/` 下提供脚本：
 
 ```sh
-# Start in background
-./scripts/start.sh
-
-# Stop
-./scripts/stop.sh
-
-# Restart
-./scripts/restart.sh
+./scripts/start.sh    # 后台启动
+./scripts/stop.sh     # 停止
+./scripts/restart.sh  # 重启
 ```
 
-Logs are written to `copilot-api.log` in the project root. The PID is saved to `copilot-api.pid` for process management.
+日志输出到 `copilot-api.log`，PID 保存在 `copilot-api.pid`。
 
-### Running as a systemd Service (Linux)
+### systemd 守护
 
-For a more robust setup, create a systemd service file at `/etc/systemd/system/copilot-api.service`:
+`/etc/systemd/system/copilot-api.service`:
 
 ```ini
 [Unit]
@@ -521,30 +446,62 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Then manage the service with standard systemd commands:
-
 ```sh
-# Enable and start
 sudo systemctl enable copilot-api
 sudo systemctl start copilot-api
-
-# Check status
 sudo systemctl status copilot-api
-
-# Stop
-sudo systemctl stop copilot-api
-
-# Restart
-sudo systemctl restart copilot-api
-
-# View logs
 journalctl -u copilot-api -f
 ```
 
-## Usage Tips
+## 常见用法 / Tips
 
-- To avoid hitting GitHub Copilot's rate limits, you can use the following flags:
-  - `--manual`: Enables manual approval for each request, giving you full control over when requests are sent.
-  - `--rate-limit <seconds>`: Enforces a minimum time interval between requests. For example, `copilot-api start --rate-limit 30` will ensure there's at least a 30-second gap between requests.
-  - `--wait`: Use this with `--rate-limit`. It makes the server wait for the cooldown period to end instead of rejecting the request with an error. This is useful for clients that don't automatically retry on rate limit errors.
-- If you have a GitHub business or enterprise plan account with Copilot, use the `--account-type` flag (e.g., `--account-type business`). See the [official documentation](https://docs.github.com/en/enterprise-cloud@latest/copilot/managing-copilot/managing-github-copilot-in-your-organization/managing-access-to-github-copilot-in-your-organization/managing-github-copilot-access-to-your-organizations-network#configuring-copilot-subscription-based-network-routing-for-your-enterprise-or-organization) for more details.
+- 想避免触发 GitHub 速率限制：
+  - `--manual` 每请求人工确认；
+  - `--rate-limit <秒>` 设最小请求间隔；
+  - `--wait` 配合 `--rate-limit`，让服务在冷却时挂起而非报错（适合不会自动重试的客户端）。
+- 商业 / 企业版 Copilot 用户务必加 `--account-type business` 或 `--account-type enterprise`，参考 [GitHub 官方文档](https://docs.github.com/en/enterprise-cloud@latest/copilot/managing-copilot/managing-github-copilot-in-your-organization/managing-access-to-github-copilot-in-your-organization/managing-github-copilot-access-to-your-organizations-network#configuring-copilot-subscription-based-network-routing-for-your-enterprise-or-organization)。
+- 多人共享部署时：用超管登录 dashboard → Tokens → New token → 设置 RPM/月度/终身限额 → 把生成的 `cpk-…` token 发给对方使用。token 明文只展示一次，遗失后只能重建。
+- 想完全关闭后台与登录入口（同时关掉鉴权）：`--no-auth`。想保留鉴权但不开后台：`--no-dashboard`。
+
+## 项目结构
+
+```
+src/
+  main.ts                  # CLI 入口
+  start.ts                 # start 子命令 + 服务启动流程
+  server.ts                # Hono 应用：日志/CORS/admin/business 路由 + SPA
+  lib/
+    auth-middleware.ts     # 业务 API 多 token + 限额校验
+    auth-token.ts          # 超管 token 读写
+    auth-token-utils.ts    # generateToken / hashToken / prefixOf
+    session.ts             # Cookie + sessionMiddleware
+    usage-recorder.ts      # 请求后写入 request_logs + 累计 lifetime
+    redacting-logger.ts    # 日志中 ?key= 脱敏
+    static-spa.ts          # dist/public 静态托管 + SPA fallback
+    state.ts               # 全局运行时状态
+  db/
+    client.ts              # bun:sqlite + drizzle 初始化
+    schema.ts              # auth_tokens / request_logs / sessions / usage_resets
+    queries/               # CRUD 封装
+  routes/
+    chat-completions/      # OpenAI 风格
+    embeddings/
+    messages/              # Anthropic ↔ OpenAI 翻译
+    models/
+    token/, usage/         # 上游信息
+    admin/                 # auth / tokens / usage 三个 subapp
+frontend/                  # Vite + React + Recharts 后台 SPA
+drizzle/                   # 自动生成的迁移
+```
+
+## 开发常用脚本
+
+```sh
+bun run dev                # 热重载启动
+bun run build              # 前端 + 后端打包到 dist/
+bun run build:frontend     # 仅打包前端
+bun test                   # 跑全部 Bun 测试
+bun run typecheck          # tsc --noEmit
+bun run lint               # eslint
+bun run db:generate        # drizzle-kit generate
+```
