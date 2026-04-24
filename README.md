@@ -60,10 +60,41 @@
 
 ## 环境要求
 
-- [Bun](https://bun.com/) ≥ 1.2.x
+- 源码运行：[Bun](https://bun.com/) ≥ 1.2.x
+- 预编译 release 包：无运行时依赖（自带嵌入式 bun runtime）
 - 可用的 GitHub Copilot 订阅（individual / business / enterprise）
 
 ## 安装
+
+### 方式 A：从 GitHub Releases 下载预编译包（推荐部署方式）
+
+发版时 GitHub Actions 会自动构建跨平台二进制并发布到 [Releases](https://github.com/weivea/copilot-api/releases)，无需安装 bun / node。
+
+```sh
+# 1. 下载并解压（按平台选择对应 tarball）
+curl -LO https://github.com/weivea/copilot-api/releases/latest/download/copilot-api-v0.7.x-linux-x64.tar.gz
+tar -xzf copilot-api-v0.7.x-linux-x64.tar.gz
+cd release
+
+# 2. 后台启动
+./scripts/start.sh
+```
+
+release tarball 内布局：
+
+```
+release/
+├── bin/copilot-api            # bun --compile 单文件二进制
+├── dist/public/               # 前端静态资源
+├── drizzle/                   # SQLite 迁移文件（运行时按相对路径读取，必须随包分发）
+└── scripts/
+    ├── start.sh / stop.sh / restart.sh
+    └── cert.sh                # certbot 包装脚本（无需 bun）
+```
+
+> 二进制内的 SPA 静态目录路径会自动从 `process.execPath` 解算，无需额外配置；如需覆盖可设置 `COPILOT_API_SPA_ROOT` 环境变量。
+
+### 方式 B：从源码安装
 
 ```sh
 bun install
@@ -76,6 +107,16 @@ bun install
 bun run build
 # 产物：dist/main.js + dist/public/{index.html, assets/...}
 ```
+
+### 自行构建 release tarball
+
+```sh
+bun run package                                # 默认 bun-linux-x64
+bun run package --target=bun-darwin-arm64      # 其他平台
+# 输出：dist/copilot-api-v<version>-<platform>.tar.gz
+```
+
+> ⚠️ 通过 `npm run package` 时需要写成 `npm run package -- --target=...`，否则 `--target` 会被 npm 自己吃掉。
 
 ## 快速开始
 
@@ -378,6 +419,8 @@ pip install certbot
 
 ### 一条龙签发
 
+源码方式：
+
 ```sh
 # 1. 获取证书（会写入 .certs/ 与 copilot-api.config.json）
 bun run cert:obtain -- --domain copilot.example.com
@@ -391,6 +434,26 @@ bun run start
 ```sh
 bun run cert:renew
 ```
+
+预编译 release 包方式（无 bun，纯 shell）：
+
+```sh
+cd release
+
+# 1. 申请证书（会写入 .certs/ 与 copilot-api.config.json）
+./scripts/cert.sh obtain --domain copilot.example.com
+
+# 2. 重启即可，启动脚本会自动读取 copilot-api.config.json 启用 HTTPS
+./scripts/restart.sh
+```
+
+续期（建议放进 cron）：
+
+```sh
+./scripts/cert.sh renew
+```
+
+> `cert.sh` 行为与 `cert:obtain` / `cert:renew` 等价：证书与日志放在 `<release>/.certs/` 下，并在 release 根目录写入 `copilot-api.config.json`。底层仍然依赖系统已安装 `certbot`。
 
 ### 配置文件
 
@@ -437,10 +500,10 @@ bun run start
 
 ### 后台运行（Linux）
 
-仓库 `scripts/` 下提供脚本：
+仓库 `scripts/` 与 release tarball 内的 `scripts/` 提供同名脚本，源码版与预编译版均可用：
 
 ```sh
-./scripts/start.sh    # 后台启动
+./scripts/start.sh    # 后台启动（源码版自动 fallback 到 `bun run bootstrap start`，release 版直接跑 bin/copilot-api）
 ./scripts/stop.sh     # 停止
 ./scripts/restart.sh  # 重启
 ```
@@ -448,6 +511,8 @@ bun run start
 日志输出到 `copilot-api.log`，PID 保存在 `copilot-api.pid`。
 
 ### systemd 守护
+
+源码部署：
 
 `/etc/systemd/system/copilot-api.service`:
 
@@ -461,6 +526,25 @@ Type=simple
 User=your-username
 WorkingDirectory=/path/to/copilot-api
 ExecStart=/usr/bin/env bun run start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+预编译 release 部署（无 bun 依赖，cwd 必须是 release 根目录，迁移文件与可选的 `copilot-api.config.json` 都按相对路径解析）：
+
+```ini
+[Unit]
+Description=Copilot API Proxy
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/path/to/release
+ExecStart=/path/to/release/bin/copilot-api start
 Restart=on-failure
 RestartSec=5
 
@@ -513,7 +597,11 @@ src/
     token/, usage/         # 上游信息
     admin/                 # auth / tokens / usage 三个 subapp
 frontend/                  # Vite + React + Recharts 后台 SPA
-drizzle/                   # 自动生成的迁移
+drizzle/                   # 自动生成的迁移（运行时按相对路径读取，会随 release tarball 一起分发）
+scripts/
+  package.ts               # 构建跨平台 release tarball（bun --compile + 资源打包）
+  start.sh / stop.sh / restart.sh
+  cert.sh                  # release 版的 certbot 包装脚本
 ```
 
 ## 开发常用脚本
@@ -526,4 +614,6 @@ bun test                   # 跑全部 Bun 测试
 bun run typecheck          # tsc --noEmit
 bun run lint               # eslint
 bun run db:generate        # drizzle-kit generate
+bun run package            # 打 release tarball（默认 bun-linux-x64）
+bun run release            # bumpp 升版本 + 自动 push tag → GitHub Actions 出 Release
 ```
