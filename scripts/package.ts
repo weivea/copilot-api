@@ -89,6 +89,15 @@ async function main() {
     recursive: true,
   })
 
+  console.log("[package] copying drizzle migrations into release")
+  const drizzleSrc = path.join(ROOT, "drizzle")
+  if (!(await fs.stat(drizzleSrc).catch(() => null))) {
+    throw new Error(
+      `drizzle migrations directory not found at ${drizzleSrc}; run 'bun run db:generate' first`,
+    )
+  }
+  await fs.cp(drizzleSrc, path.join(RELEASE, "drizzle"), { recursive: true })
+
   console.log("[package] copying control scripts into release")
   const scriptsOut = path.join(RELEASE, "scripts")
   await fs.mkdir(scriptsOut, { recursive: true })

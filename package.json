@@ -37,7 +37,7 @@
     "lint:all": "eslint --cache .",
     "prepack": "bun run build",
     "package": "bun run scripts/package.ts",
-    "release": "bumpp && bun publish --access public",
+    "release": "bumpp",
     "setup": "bun run setup:frontend && bun run db:generate",
     "setup:frontend": "cd frontend && bun install",
     "show-token": "bun run ./src/scripts/show-token.ts",
