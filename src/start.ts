@@ -26,7 +26,6 @@ interface RunServerOptions {
   rateLimitWait: boolean
   githubToken?: string
   claudeCode: boolean
-  showToken: boolean
   noAuth: boolean
   proxyEnv: boolean
   tlsCert?: string
@@ -54,7 +53,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.manualApprove = options.manual
   state.rateLimitSeconds = options.rateLimit
   state.rateLimitWait = options.rateLimitWait
-  state.showToken = options.showToken
   state.authEnabled = !options.noAuth
 
   await ensurePaths()
@@ -159,7 +157,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
         [
           "📊 Dashboard ready",
           `  URL:   ${serverUrl}/`,
-          `  Token: see the "Super admin token" line above, or rerun with --show-token`,
+          `  Token: see the "Super admin token" line above, or run \`bun run show-token\``,
           "  Open the URL, then paste the token into the login form.",
         ]
       : ["📊 Dashboard ready", `  URL:   ${serverUrl}/`, "  Auth: disabled"]
@@ -230,11 +228,6 @@ export const start = defineCommand({
       description:
         "Generate a command to launch Claude Code with Copilot API config",
     },
-    "show-token": {
-      type: "boolean",
-      default: false,
-      description: "Show GitHub and Copilot tokens on fetch and refresh",
-    },
     auth: {
       type: "boolean",
       default: true,
@@ -284,7 +277,6 @@ export const start = defineCommand({
       rateLimitWait: args.wait,
       githubToken: args["github-token"],
       claudeCode: args["claude-code"],
-      showToken: args["show-token"],
       noAuth: !args.auth,
       proxyEnv: args["proxy-env"],
       tlsCert: args["tls-cert"],

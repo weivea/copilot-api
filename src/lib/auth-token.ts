@@ -75,7 +75,7 @@ export async function setupAuthToken(): Promise<void> {
     consola.warn("Failed to ensure super-admin row in auth_tokens:", err)
   }
 
-  if (generated || state.showToken) {
+  if (generated) {
     consola.info(`Super admin token: ${token}`)
   }
   consola.info(`Auth: enabled (super admin prefix: ${prefixOf(token)})`)

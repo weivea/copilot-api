@@ -39,6 +39,7 @@
     "release": "bumpp && bun publish --access public",
     "setup": "bun run setup:frontend && bun run db:generate",
     "setup:frontend": "cd frontend && bun install",
+    "show-token": "bun run ./src/scripts/show-token.ts",
     "start": "NODE_ENV=production bun run ./src/main.ts start",
     "typecheck": "tsc"
   },

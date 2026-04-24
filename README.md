@@ -104,12 +104,12 @@ bun run start      # 生产模式启动
 🌐 Usage Viewer: 旧版静态 viewer（外部 GitHub Pages）
 📊 Dashboard ready
   URL:   http://localhost:4141/
-  Token: see the "Super admin token" line above, or rerun with --show-token
+  Token: see the "Super admin token" line above, or run `bun run show-token`
   Open the URL, then paste the token into the login form.
 ```
 
 > 首次启动时，需在浏览器完成一次 GitHub OAuth 设备码授权（Copilot 登录）。完成后 token 持久化到 `~/.local/share/copilot-api/`，之后启动即静默。
-> 同时会自动生成超管 token 写入 `~/.local/share/copilot-api/auth_token`。首次生成时（或后续启动加 `--show-token`）会打印完整 token 到 banner 中，可复制后粘贴到 dashboard 登录表单，也可直接用作 API 鉴权 Bearer token。
+> 同时会自动生成超管 token 写入 `~/.local/share/copilot-api/auth_token`。首次生成时会打印完整 token 到 banner 中；之后想再次查看可执行 `bun run show-token`。可复制后粘贴到 dashboard 登录表单，也可直接用作 API 鉴权 Bearer token。
 
 ### 其他常用一键脚本
 
@@ -142,7 +142,6 @@ bun run start      # 生产模式启动
 | `--wait` | 命中速率限制时等待而非报错 | `false` | `-w` |
 | `--github-token` | 直接传入 GitHub token | — | `-g` |
 | `--claude-code` | 生成启动 Claude Code 的环境变量命令 | `false` | `-c` |
-| `--show-token` | 在日志中打印 GitHub / Copilot token | `false` | — |
 | `--no-auth` | 关闭鉴权（同时禁用 dashboard） | `false` | — |
 | `--proxy-env` | 从环境变量初始化 HTTP/HTTPS 代理 | `false` | — |
 | `--tls-cert` | TLS 证书路径（PEM） | — | — |
@@ -162,7 +161,6 @@ bun run start      # 生产模式启动
 | 选项 | 说明 | 默认值 | 别名 |
 | --- | --- | --- | --- |
 | `--verbose` | 启用详细日志 | `false` | `-v` |
-| `--show-token` | 输出生成的 GitHub token | `false` | — |
 
 ### `debug` 命令选项
 
@@ -242,12 +240,12 @@ curl http://localhost:4141/v1/messages \
 
 ### 进入 Dashboard
 
-启动后 banner 中会分别给出 dashboard 地址和（首次或 `--show-token` 时）超管 token：
+启动后 banner 中会分别给出 dashboard 地址和超管 token（首次启动会自动打印；后续可执行 `bun run show-token` 再次查看）：
 
 ```
 📊 Dashboard ready
   URL:   http://localhost:4141/
-  Token: see the "Super admin token" line above, or rerun with --show-token
+  Token: see the "Super admin token" line above, or run `bun run show-token`
 ```
 
 打开 `http://localhost:4141/`，把超管 token 粘贴到登录表单提交即可。出于安全考虑，token 不再通过 URL 查询参数传递（避免泄露到浏览器历史、shell 历史与 HTTP 请求来源头部）。登录成功后 session 写入 HttpOnly Cookie，后续 reload 不需要再次输入。
@@ -362,7 +360,6 @@ bun run start --claude-code
 }
 ```
 
-> 用 `bun run start auth-token` 查看你的超管 token，或在启动日志里找。
 > 更多选项见 [Claude Code settings](https://docs.anthropic.com/en/docs/claude-code/settings#environment-variables) 与 [IDE 集成](https://docs.anthropic.com/en/docs/claude-code/ide-integrations)。
 
 ## HTTPS / TLS

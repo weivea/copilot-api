@@ -40,7 +40,6 @@ export function bootstrapCopilotToken(): Promise<void> {
     const { token, refresh_in } = await getCopilotToken()
     state.copilotToken = token
     consola.debug("GitHub Copilot Token fetched successfully!")
-    if (state.showToken) consola.info("Copilot token:", token)
 
     const refreshInterval = (refresh_in - 60) * 1000
     refreshTimer = setInterval(async () => {
@@ -49,7 +48,6 @@ export function bootstrapCopilotToken(): Promise<void> {
         const { token } = await getCopilotToken()
         state.copilotToken = token
         consola.debug("Copilot token refreshed")
-        if (state.showToken) consola.info("Refreshed Copilot token:", token)
       } catch (error) {
         // Intentionally non-fatal: keep the proxy serving with the existing
         // (possibly soon-to-expire) token rather than crashing on transient
@@ -80,7 +78,6 @@ export async function setupGitHubToken(
 
     if (trimmed && !options?.force) {
       state.githubToken = trimmed
-      if (state.showToken) consola.info("GitHub token:", trimmed)
       await logUser()
       return
     }
@@ -102,7 +99,6 @@ export async function setupGitHubToken(
     await writeGithubToken(token)
     state.githubToken = token
 
-    if (state.showToken) consola.info("GitHub token:", token)
     await logUser()
   } catch (error) {
     if (error instanceof HTTPError) {

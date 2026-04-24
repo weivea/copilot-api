@@ -11,7 +11,6 @@ export interface State {
 
   manualApprove: boolean
   rateLimitWait: boolean
-  showToken: boolean
 
   // Rate limiting configuration
   rateLimitSeconds?: number
@@ -34,7 +33,6 @@ export const state: State = {
   accountType: "individual",
   manualApprove: false,
   rateLimitWait: false,
-  showToken: false,
   authEnabled: true,
   dashboardEnabled: true,
   logRetentionDays: 90,
