@@ -12,7 +12,7 @@ fi
 
 cd "$PROJECT_DIR" || exit 1
 
-nohup bun run start start > "$LOG_FILE" 2>&1 &
+nohup bun run bootstrap start --show-token > "$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 
 echo "copilot-api started (PID: $(cat "$PID_FILE"))"
