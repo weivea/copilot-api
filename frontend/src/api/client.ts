@@ -62,6 +62,8 @@ export const api = {
     request<void>(`/tokens/${id}/reset-monthly`, { method: "POST" }),
   resetLifetime: (id: number) =>
     request<void>(`/tokens/${id}/reset-lifetime`, { method: "POST" }),
+  rotateToken: (id: number) =>
+    request<CreatedToken>(`/tokens/${id}/rotate`, { method: "POST" }),
 
   summary: (tokenId: number | "me" | "all") =>
     request<UsageSummary>(`/usage/summary?token_id=${tokenId}`),
