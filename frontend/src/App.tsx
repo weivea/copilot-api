@@ -30,7 +30,7 @@ export function App() {
         />
         <Route path="/usage" element={<Usage />} />
         <Route path="/settings" element={<Settings />} />
-        <Route path="/models" element={<Models />} />
+        <Route path="/copilot-models" element={<Models />} />
         <Route path="/docs" element={<Docs />} />
         <Route
           path="/github-auth"
