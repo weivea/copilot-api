@@ -22,19 +22,24 @@
     "dist"
   ],
   "scripts": {
+    "bootstrap": "bun install && bun run build && bun run start",
     "build": "bun run build:frontend && tsdown",
     "build:frontend": "cd frontend && bun install && bun run build",
     "cert:obtain": "bun run ./src/scripts/cert.ts obtain",
     "cert:renew": "bun run ./src/scripts/cert.ts renew",
     "db:generate": "drizzle-kit generate",
-    "dev": "bun run --watch ./src/main.ts",
+    "dev": "bun run --watch ./src/main.ts start",
+    "dev:all": "bun install && bun run setup && bun run --watch ./src/main.ts start",
     "generate-token": "bun run ./src/scripts/generate-token.ts",
+    "postinstall": "test -d frontend/node_modules || bun run setup:frontend",
     "knip": "knip-bun",
     "lint": "eslint --cache",
     "lint:all": "eslint --cache .",
     "prepack": "bun run build",
     "release": "bumpp && bun publish --access public",
-    "start": "NODE_ENV=production bun run ./src/main.ts",
+    "setup": "bun run setup:frontend && bun run db:generate",
+    "setup:frontend": "cd frontend && bun install",
+    "start": "NODE_ENV=production bun run ./src/main.ts start",
     "typecheck": "tsc"
   },
   "dependencies": {

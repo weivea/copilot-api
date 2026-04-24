@@ -15,8 +15,30 @@ import { deleteSessionsForToken } from "~/db/queries/sessions"
 import { appendUsageReset } from "~/db/queries/usage-resets"
 import { generateToken, hashToken, prefixOf } from "~/lib/auth-token-utils"
 import { sessionMiddleware } from "~/lib/session"
+import { state } from "~/lib/state"
 
 export const adminTokensRoutes = new Hono()
+
+const SUPER_ADMIN_NAME = "__super_admin__"
+
+function isSuperAdminRow(row: { id: number; name: string }): boolean {
+  if (state.superAdminTokenId !== undefined && row.id === state.superAdminTokenId) {
+    return true
+  }
+  return row.name === SUPER_ADMIN_NAME
+}
+
+function superAdminProtected(c: Context) {
+  return c.json(
+    {
+      error: {
+        type: "permission_denied",
+        message: "Super admin row is system-managed and cannot be modified.",
+      },
+    },
+    403,
+  )
+}
 
 // All token endpoints require admin or super
 adminTokensRoutes.use("*", sessionMiddleware({ requireRole: "admin" }))
@@ -46,6 +68,7 @@ function publicRow(row: {
     lifetime_token_used: row.lifetimeTokenUsed,
     created_at: row.createdAt,
     last_used_at: row.lastUsedAt,
+    is_super_admin: isSuperAdminRow(row),
   }
 }
 
@@ -133,6 +156,7 @@ adminTokensRoutes.patch("/:id", async (c) => {
   const r = await loadTargetOr404(c, id)
   if (!r.ok) return r.resp
   const row = r.row
+  if (isSuperAdminRow(row)) return superAdminProtected(c)
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
       {
@@ -183,6 +207,7 @@ adminTokensRoutes.delete("/:id", async (c) => {
   const r = await loadTargetOr404(c, id)
   if (!r.ok) return r.resp
   const row = r.row
+  if (isSuperAdminRow(row)) return superAdminProtected(c)
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
       {
@@ -205,6 +230,7 @@ adminTokensRoutes.post("/:id/reset-monthly", async (c) => {
   const r = await loadTargetOr404(c, id)
   if (!r.ok) return r.resp
   const row = r.row
+  if (isSuperAdminRow(row)) return superAdminProtected(c)
   if (role !== "super" && row.isAdmin === 1) {
     return c.json(
       {
@@ -231,6 +257,7 @@ adminTokensRoutes.post("/:id/reset-lifetime", async (c) => {
   const id = Number.parseInt(c.req.param("id"), 10)
   const r = await loadTargetOr404(c, id)
   if (!r.ok) return r.resp
+  if (isSuperAdminRow(r.row)) return superAdminProtected(c)
   await setLifetimeUsed(id, 0)
   await appendUsageReset(id, "lifetime", Date.now())
   return c.json({ ok: true })

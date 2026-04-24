@@ -18,6 +18,7 @@ export interface TokenRow {
   lifetime_token_used: number
   created_at: number
   last_used_at: number | null
+  is_super_admin?: boolean
 }
 
 export interface CreatedToken extends TokenRow {

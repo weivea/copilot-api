@@ -6,6 +6,7 @@ export default defineConfig({
   format: ["esm"],
   target: "es2022",
   platform: "node",
+  external: [/^bun:/],
 
   sourcemap: true,
   clean: ["dist/main.js", "dist/main.js.map"],

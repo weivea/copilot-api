@@ -4,6 +4,7 @@ import consola from "consola"
 
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
+import { recordUsage } from "~/lib/usage-recorder"
 
 import { type AnthropicMessagesPayload } from "./anthropic-types"
 import { translateToOpenAI } from "./non-stream-translation"
@@ -25,6 +26,7 @@ export async function handleCountTokens(c: Context) {
 
     if (!selectedModel) {
       consola.warn("Model not found, returning default token count")
+      recordUsage(c, { model: anthropicPayload.model ?? null })
       return c.json({
         input_tokens: 1,
       })
@@ -57,6 +59,12 @@ export async function handleCountTokens(c: Context) {
     }
 
     consola.info("Token count:", finalTokenCount)
+
+    recordUsage(c, {
+      model: anthropicPayload.model ?? null,
+      promptTokens: finalTokenCount,
+      totalTokens: finalTokenCount,
+    })
 
     return c.json({
       input_tokens: finalTokenCount,

@@ -21,6 +21,7 @@ export interface State {
   // The file-resident super admin token (plaintext, kept in memory for compare)
   superAdminToken?: string
   superAdminTokenHash?: string
+  superAdminTokenId?: number
 
   // Dashboard / DB configuration
   dashboardEnabled: boolean

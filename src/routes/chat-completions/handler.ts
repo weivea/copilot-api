@@ -7,7 +7,7 @@ import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
-import { recordUsage } from "~/lib/usage-recorder"
+import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
 import { isNullish } from "~/lib/utils"
 import {
   createChatCompletions,
@@ -213,6 +213,7 @@ export async function handleCompletion(c: Context) {
   }
 
   const usage = { prompt: 0, completion: 0, total: 0 }
+  deferUsage(c)
   return streamSSE(
     c,
     (stream) => pipeOpenAIStream(stream, response, usage, c, payload.model),
@@ -286,6 +287,7 @@ async function pipeOpenAIStream(
       completionTokens: usage.completion || null,
       totalTokens: usage.total || null,
     })
+    await flushUsage(c)
   }
 }
 

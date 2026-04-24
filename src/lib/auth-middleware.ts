@@ -39,12 +39,27 @@ function startOfCurrentMonthMs(): number {
   return d.getTime()
 }
 
+const PROTECTED_PREFIXES = [
+  "/chat/completions",
+  "/models",
+  "/embeddings",
+  "/token",
+  "/v1/",
+]
+
+function isProtectedPath(path: string): boolean {
+  return PROTECTED_PREFIXES.some((p) => path === p || path.startsWith(p))
+}
+
 export function authMiddleware(): MiddlewareHandler {
   return async (c, next) => {
     if (!state.authEnabled) return next()
 
     // Health check stays open
     if (c.req.path === "/healthz") return next()
+
+    // Only enforce on real API endpoints; let SPA assets/routes fall through
+    if (!isProtectedPath(c.req.path)) return next()
 
     const presented = extractToken(c)
     if (!presented) {
@@ -62,6 +77,9 @@ export function authMiddleware(): MiddlewareHandler {
       state.superAdminTokenHash !== undefined
       && constantTimeEqual(hashToken(presented), state.superAdminTokenHash)
     ) {
+      if (state.superAdminTokenId !== undefined) {
+        c.set("authTokenId", state.superAdminTokenId)
+      }
       return next()
     }
 

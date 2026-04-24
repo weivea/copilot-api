@@ -122,17 +122,33 @@ export function Tokens() {
         </thead>
         <tbody>
           {rows.map((r) => {
-            const canEdit = isSuper || !r.is_admin
+            const isSuperRow = r.is_super_admin === true
+            const canEdit = !isSuperRow && (isSuper || !r.is_admin)
             return (
               <tr key={r.id}>
                 <td>
                   {r.name}
+                  {isSuperRow && (
+                    <span
+                      style={{
+                        marginLeft: 6,
+                        fontSize: 11,
+                        padding: "1px 6px",
+                        borderRadius: 4,
+                        background: "var(--bg)",
+                        border: "1px solid var(--border)",
+                      }}
+                      title="System-managed super admin row"
+                    >
+                      system
+                    </span>
+                  )}
                   {r.is_disabled && (
                     <span className="error"> (disabled)</span>
                   )}
                 </td>
                 <td><code>{r.token_prefix}</code></td>
-                <td>{r.is_admin ? "admin" : "user"}</td>
+                <td>{isSuperRow ? "super" : r.is_admin ? "admin" : "user"}</td>
                 <td>{r.rpm_limit ?? "—"}</td>
                 <td>{r.monthly_token_limit ?? "—"}</td>
                 <td>
@@ -157,7 +173,7 @@ export function Tokens() {
                       Reset monthly
                     </button>
                   )}
-                  {isSuper && (
+                  {isSuper && !isSuperRow && (
                     <button
                       onClick={() =>
                         ask(

@@ -142,10 +142,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     }
   }
 
-  consola.box(
-    `🌐 Usage Viewer: https://ericc-ch.github.io/copilot-api?endpoint=${serverUrl}/usage`,
-  )
-
   if (state.dashboardEnabled) {
     consola.box(
       `📊 Dashboard: ${serverUrl}/?key=${state.superAdminToken ?? "<your-token>"}`,

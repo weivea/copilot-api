@@ -6,7 +6,7 @@ import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { recordUsage } from "~/lib/usage-recorder"
+import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -62,6 +62,7 @@ export async function handleCompletion(c: Context) {
 
   consola.debug("Streaming response from Copilot")
   const usage = { prompt: 0, completion: 0, total: 0 }
+  deferUsage(c)
   return streamSSE(
     c,
     (stream) =>
@@ -146,6 +147,7 @@ async function runAnthropicStream(
       completionTokens: usage.completion || null,
       totalTokens: usage.total || null,
     })
+    await flushUsage(c)
   }
 }
 

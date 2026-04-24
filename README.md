@@ -57,9 +57,6 @@
 - **本地存储 0600**：超管 token、SQLite 文件均以受限权限存储于 `~/.local/share/copilot-api/`。
 - **CLI 速率控制**：`--rate-limit`、`--wait`、`--manual` 与多 token 配额并存。
 
-## Demo
-
-https://github.com/user-attachments/assets/7654b383-669d-4eb9-b23c-06d7aefee8c5
 
 ## 环境要求
 
@@ -70,6 +67,7 @@ https://github.com/user-attachments/assets/7654b383-669d-4eb9-b23c-06d7aefee8c5
 
 ```sh
 bun install
+# postinstall 会自动安装 frontend/ 目录下的依赖（仅在缺失时执行）
 ```
 
 构建（包含前端 dashboard）：
@@ -81,19 +79,43 @@ bun run build
 
 ## 快速开始
 
+最简单的方式 —— 一条命令完成 install + build + start：
+
 ```sh
-# 开发模式（带 watch）
-bun run dev
-
-# 生产模式
-bun run start
-
-# 启动后控制台会输出两个 URL：
-#   🌐 Usage Viewer: 旧版静态 viewer（外部 GitHub Pages）
-#   📊 Dashboard:    http://localhost:4141/?key=cpk-xxx...   ← 新内置后台
+git clone https://github.com/ericc-ch/copilot-api.git
+cd copilot-api
+bun run bootstrap
 ```
 
-第一次启动时，会自动生成超管 token 写入 `~/.local/share/copilot-api/auth_token`，并在 banner 中显示，供你登录 dashboard 与作为 API 鉴权 Bearer token 使用。
+`bootstrap` 等价于 `bun install && bun run build && bun run start`，覆盖从克隆到启动的全流程。
+
+分步执行：
+
+```sh
+bun install        # 安装根依赖；postinstall 自动装前端依赖
+bun run build      # 编译前端 + 后端，输出到 dist/
+bun run start      # 生产模式启动
+# 或：bun run dev   # 开发模式（带 watch）
+```
+
+启动后控制台会输出两个 URL：
+
+```
+🌐 Usage Viewer: 旧版静态 viewer（外部 GitHub Pages）
+📊 Dashboard:    http://localhost:4141/?key=cpk-xxx...   ← 新内置后台
+```
+
+> 首次启动时，需在浏览器完成一次 GitHub OAuth 设备码授权（Copilot 登录）。完成后 token 持久化到 `~/.local/share/copilot-api/`，之后启动即静默。
+> 同时会自动生成超管 token 写入 `~/.local/share/copilot-api/auth_token`，并在 banner 中显示，用于登录 dashboard 与作为 API 鉴权 Bearer token。
+
+### 其他常用一键脚本
+
+| 命令 | 作用 |
+| --- | --- |
+| `bun run bootstrap` | install + build + start，clone 后一键运行 |
+| `bun run setup` | 仅初始化：装前端依赖 + `drizzle-kit generate` |
+| `bun run dev:all` | install + setup + dev（带 watch）|
+| `bun run build` | 编译前端 + 后端 |
 
 ## CLI 命令
 
