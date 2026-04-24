@@ -174,6 +174,23 @@ export DISABLE_NON_ESSENTIAL_MODEL_CALLS=1
 export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 claude`
 
+  const claudeCodeSettings = `{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "ANTHROPIC_BASE_URL": "${baseUrl}",
+    "ANTHROPIC_AUTH_TOKEN": "${tokenPlaceholder}",
+    "ANTHROPIC_MODEL": "claude-opus-4.7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4.7",
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku-4.5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.5",
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "alwaysThinkingEnabled": true,
+  "skipDangerousModePermissionPrompt": true
+}`
+
   const pythonOpenai = `from openai import OpenAI
 
 client = OpenAI(
@@ -305,11 +322,26 @@ print(resp.choices[0].message.content)`
           <section id="claude-code">
             <h2>Claude Code Setup</h2>
             <p>
-              Export these environment variables before launching{" "}
-              <code>claude</code>. The CLI will then route all traffic through
-              this proxy.
+              Two ways to configure Claude Code: shell environment variables,
+              or a persistent <code>~/.claude/settings.json</code>.
+            </p>
+
+            <h3>Option A — Shell environment</h3>
+            <p>
+              Export these variables before launching <code>claude</code>. The
+              CLI will then route all traffic through this proxy.
             </p>
             <CodeBlock code={claudeCodeShell} />
+
+            <h3>
+              Option B — <code>~/.claude/settings.json</code>
+            </h3>
+            <p>
+              Drop this into <code>~/.claude/settings.json</code> to make the
+              configuration persistent across sessions.
+            </p>
+            <CodeBlock code={claudeCodeSettings} />
+
             <p className="muted small">
               The <code>DISABLE_NON_ESSENTIAL_MODEL_CALLS</code> and{" "}
               <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC</code> flags
