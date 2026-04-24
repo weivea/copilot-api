@@ -42,5 +42,25 @@ server.route("/v1/models", modelRoutes)
 server.route("/v1/embeddings", embeddingRoutes)
 server.route("/v1/messages", messageRoutes)
 
-const SPA_ROOT = path.resolve(import.meta.dir, "..", "dist", "public")
+function resolveSpaRoot(): string {
+  // Explicit override (deployment / debugging)
+  if (process.env.COPILOT_API_SPA_ROOT) {
+    return path.resolve(process.env.COPILOT_API_SPA_ROOT)
+  }
+  // bun --compile single-file binary: import.meta.dir lives in the bunfs
+  // virtual FS, so resolve relative to the binary on disk instead.
+  // Layout in the release tarball:  release/bin/copilot-api  →  release/dist/public
+  if (import.meta.dir.startsWith("/$bunfs/")) {
+    return path.resolve(
+      path.dirname(process.execPath),
+      "..",
+      "dist",
+      "public",
+    )
+  }
+  // Dev / `bun run src/main.ts`: resolve relative to source.
+  return path.resolve(import.meta.dir, "..", "dist", "public")
+}
+
+const SPA_ROOT = resolveSpaRoot()
 server.use(staticSpa(SPA_ROOT))
