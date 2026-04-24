@@ -101,7 +101,7 @@ async function main() {
   console.log("[package] copying control scripts into release")
   const scriptsOut = path.join(RELEASE, "scripts")
   await fs.mkdir(scriptsOut, { recursive: true })
-  for (const name of ["start.sh", "stop.sh", "restart.sh"]) {
+  for (const name of ["start.sh", "stop.sh", "restart.sh", "cert.sh"]) {
     const src = path.join(ROOT, "scripts", name)
     const dst = path.join(scriptsOut, name)
     await fs.copyFile(src, dst)
