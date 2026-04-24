@@ -22,7 +22,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "bun run build:frontend && tsdown",
+    "build:frontend": "cd frontend && bun install && bun run build",
     "cert:obtain": "bun run ./src/scripts/cert.ts obtain",
     "cert:renew": "bun run ./src/scripts/cert.ts renew",
     "db:generate": "drizzle-kit generate",
