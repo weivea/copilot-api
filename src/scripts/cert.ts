@@ -11,9 +11,8 @@
 import consola from "consola"
 import { execSync } from "node:child_process"
 import fs from "node:fs/promises"
-import path from "node:path"
 
-import { CERTS_DIR, deriveCertbotPaths, loadConfig } from "../lib/config"
+import { deriveCertbotPaths, loadConfig } from "../lib/config"
 import { PATHS, ensurePaths } from "../lib/paths"
 
 type Action = "obtain" | "renew"
@@ -39,7 +38,7 @@ function run(command: string): void {
 }
 
 function certbotDirFlags(): string {
-  const certsDir = path.resolve(process.cwd(), CERTS_DIR)
+  const certsDir = PATHS.CERTS_DIR
   return `--config-dir ${certsDir} --work-dir ${certsDir}/work --logs-dir ${certsDir}/logs`
 }
 

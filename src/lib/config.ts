@@ -19,10 +19,8 @@ export type AppConfig = z.infer<typeof configSchema>
 
 const PROJECT_CONFIG_FILENAME = "copilot-api.config.json"
 
-export const CERTS_DIR = ".certs"
-
 export function deriveCertbotPaths(domain: string, baseDir?: string) {
-  const base = baseDir ?? path.resolve(process.cwd(), CERTS_DIR)
+  const base = baseDir ?? PATHS.CERTS_DIR
   return {
     cert: path.join(base, "live", domain, "fullchain.pem"),
     key: path.join(base, "live", domain, "privkey.pem"),

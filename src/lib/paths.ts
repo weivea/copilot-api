@@ -8,6 +8,7 @@ const GITHUB_TOKEN_PATH = path.join(APP_DIR, "github_token")
 const CONFIG_PATH = path.join(APP_DIR, "copilot-api.config.json")
 const AUTH_TOKEN_PATH = path.join(APP_DIR, "auth_token")
 const DB_PATH = path.join(APP_DIR, "copilot-api.db")
+const CERTS_DIR = path.join(APP_DIR, "certs")
 
 export const PATHS = {
   APP_DIR,
@@ -15,6 +16,7 @@ export const PATHS = {
   CONFIG_PATH,
   AUTH_TOKEN_PATH,
   DB_PATH,
+  CERTS_DIR,
 }
 
 export async function ensurePaths(): Promise<void> {
