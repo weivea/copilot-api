@@ -64,3 +64,33 @@ export interface RecentLog {
 }
 
 export type Bucket = "hour" | "day" | "week" | "month"
+
+export interface GithubAuthStatus {
+  hasToken: boolean
+  login: string | null
+  copilotReady: boolean
+  activeFlow: { id: string; expiresAt: number } | null
+}
+
+export interface DeviceFlowStart {
+  flow_id: string
+  user_code: string
+  verification_uri: string
+  verification_uri_complete: string | null
+  expires_in: number
+  interval: number
+}
+
+export type DeviceFlowStatus =
+  | "pending"
+  | "success"
+  | "error"
+  | "expired"
+  | "cancelled"
+
+export interface DeviceFlowState {
+  status: DeviceFlowStatus
+  error: string | null
+  login: string | null
+  expiresAt: number
+}

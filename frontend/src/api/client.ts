@@ -1,5 +1,8 @@
 import type {
   CreatedToken,
+  DeviceFlowStart,
+  DeviceFlowState,
+  GithubAuthStatus,
   MeResponse,
   PerTokenRow,
   RecentLog,
@@ -79,4 +82,19 @@ export const api = {
     request<Array<RecentLog>>(
       `/usage/recent?token_id=${tokenId}&limit=${limit}`,
     ),
+
+  githubStatus: () => request<GithubAuthStatus>("/github/status"),
+  startGithubFlow: () =>
+    request<DeviceFlowStart>("/github/device-flow/start", {
+      method: "POST",
+      body: "{}",
+    }),
+  getGithubFlow: (id: string) =>
+    request<DeviceFlowState>(`/github/device-flow/${id}`),
+  cancelGithubFlow: (id: string) =>
+    request<{ ok: true }>(`/github/device-flow/${id}/cancel`, {
+      method: "POST",
+    }),
+  githubLogout: () =>
+    request<{ ok: true }>("/github/logout", { method: "POST" }),
 }
