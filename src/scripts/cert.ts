@@ -14,8 +14,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import { CERTS_DIR, deriveCertbotPaths, loadConfig } from "../lib/config"
-
-const LOCAL_CONFIG_NAME = "copilot-api.config.json"
+import { PATHS, ensurePaths } from "../lib/paths"
 
 type Action = "obtain" | "renew"
 
@@ -89,7 +88,8 @@ async function main(): Promise<void> {
 
   const paths = deriveCertbotPaths(domain)
   const configContent = { domain, tls: paths }
-  const configPath = path.resolve(process.cwd(), LOCAL_CONFIG_NAME)
+  await ensurePaths()
+  const configPath = PATHS.CONFIG_PATH
 
   await fs.writeFile(configPath, JSON.stringify(configContent, null, 2) + "\n")
 

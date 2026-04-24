@@ -5,7 +5,7 @@ import path from "node:path"
 const APP_DIR = path.join(os.homedir(), ".local", "share", "copilot-api")
 
 const GITHUB_TOKEN_PATH = path.join(APP_DIR, "github_token")
-const CONFIG_PATH = path.join(APP_DIR, "config.json")
+const CONFIG_PATH = path.join(APP_DIR, "copilot-api.config.json")
 const AUTH_TOKEN_PATH = path.join(APP_DIR, "auth_token")
 const DB_PATH = path.join(APP_DIR, "copilot-api.db")
 
