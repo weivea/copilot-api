@@ -16,9 +16,16 @@ export interface State {
   rateLimitSeconds?: number
   lastRequestTimestamp?: number
 
-  // Auth token configuration
-  authToken?: string
+  // Outbound auth configuration
   authEnabled: boolean
+  // The file-resident super admin token (plaintext, kept in memory for compare)
+  superAdminToken?: string
+  superAdminTokenHash?: string
+
+  // Dashboard / DB configuration
+  dashboardEnabled: boolean
+  dbPath?: string
+  logRetentionDays: number
 }
 
 export const state: State = {
@@ -27,4 +34,6 @@ export const state: State = {
   rateLimitWait: false,
   showToken: false,
   authEnabled: true,
+  dashboardEnabled: true,
+  logRetentionDays: 90,
 }

@@ -1,14 +1,12 @@
 import consola from "consola"
-import crypto from "node:crypto"
 import fs from "node:fs/promises"
 
+import { hashToken, prefixOf } from "~/lib/auth-token-utils"
+import { generateToken } from "~/lib/auth-token-utils"
 import { PATHS } from "~/lib/paths"
 import { state } from "~/lib/state"
 
-export function generateAuthToken(): string {
-  const bytes = crypto.randomBytes(32)
-  return `cpk-${bytes.toString("hex")}`
-}
+export { generateToken as generateAuthToken } from "~/lib/auth-token-utils"
 
 export async function loadAuthToken(): Promise<string | undefined> {
   try {
@@ -32,14 +30,18 @@ export async function setupAuthToken(): Promise<void> {
   }
 
   let token = await loadAuthToken()
-
+  let generated = false
   if (!token) {
-    token = generateAuthToken()
+    token = generateToken()
     await saveAuthToken(token)
-    consola.info(`Auth token generated: ${token}`)
+    generated = true
   }
 
-  // eslint-disable-next-line require-atomic-updates
-  state.authToken = token
-  consola.info(`Auth: enabled (token: ${token})`)
+  state.superAdminToken = token
+  state.superAdminTokenHash = hashToken(token)
+
+  if (generated || state.showToken) {
+    consola.info(`Super admin token: ${token}`)
+  }
+  consola.info(`Auth: enabled (super admin prefix: ${prefixOf(token)})`)
 }

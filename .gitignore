@@ -12,6 +12,7 @@ node_modules/
 
 # build output
 dist/
+dist/public
 
 # TLS certificates
 .certs/
@@ -20,5 +21,9 @@ copilot-api.config.json
 # Runtime files
 copilot-api.pid
 copilot-api.log
+
 # Brainstorming visual companion sessions
 .superpowers/
+
+# Frontend
+frontend/node_modules

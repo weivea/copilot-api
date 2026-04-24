@@ -47,4 +47,3 @@ export async function forwardError(c: Context, error: unknown) {
     500,
   )
 }
-

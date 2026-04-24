@@ -7,6 +7,7 @@ import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
+import { recordUsage } from "~/lib/usage-recorder"
 import { isNullish } from "~/lib/utils"
 import {
   createChatCompletions,
@@ -202,12 +203,19 @@ export async function handleCompletion(c: Context) {
   const response = await createChatCompletions(payload)
 
   if (isNonStreaming(response)) {
+    recordUsage(c, {
+      model: payload.model,
+      promptTokens: response.usage?.prompt_tokens ?? null,
+      completionTokens: response.usage?.completion_tokens ?? null,
+      totalTokens: response.usage?.total_tokens ?? null,
+    })
     return c.json(response)
   }
 
+  const usage = { prompt: 0, completion: 0, total: 0 }
   return streamSSE(
     c,
-    (stream) => pipeOpenAIStream(stream, response),
+    (stream) => pipeOpenAIStream(stream, response, usage, c, payload.model),
     (error) => {
       consola.error("streamSSE onError (chat-completions):", error)
       return Promise.resolve()
@@ -218,6 +226,9 @@ export async function handleCompletion(c: Context) {
 async function pipeOpenAIStream(
   stream: SSEStreamingApi,
   response: AsyncIterable<{ data?: string }>,
+  usage: { prompt: number; completion: number; total: number },
+  c: Context,
+  model: string,
 ): Promise<void> {
   const abortState = { aborted: false }
   stream.onAbort(() => {
@@ -237,6 +248,19 @@ async function pipeOpenAIStream(
     for await (const chunk of response) {
       if (abortState.aborted) break
       if (chunk.data === undefined) continue
+      if (chunk.data && chunk.data !== "[DONE]") {
+        try {
+          const parsed = JSON.parse(chunk.data)
+          if (parsed?.usage) {
+            usage.prompt = parsed.usage.prompt_tokens ?? usage.prompt
+            usage.completion =
+              parsed.usage.completion_tokens ?? usage.completion
+            usage.total = parsed.usage.total_tokens ?? usage.total
+          }
+        } catch {
+          /* not json */
+        }
+      }
       await stream.writeSSE({ data: chunk.data })
     }
   } catch (error) {
@@ -256,6 +280,12 @@ async function pipeOpenAIStream(
     }
   } finally {
     clearInterval(pingInterval)
+    recordUsage(c, {
+      model,
+      promptTokens: usage.prompt || null,
+      completionTokens: usage.completion || null,
+      totalTokens: usage.total || null,
+    })
   }
 }
 

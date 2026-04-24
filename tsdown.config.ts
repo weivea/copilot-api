@@ -8,7 +8,7 @@ export default defineConfig({
   platform: "node",
 
   sourcemap: true,
-  clean: true,
+  clean: ["dist/main.js", "dist/main.js.map"],
   removeNodeProtocol: false,
 
   env: {

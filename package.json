@@ -22,9 +22,11 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "bun run build:frontend && tsdown",
+    "build:frontend": "cd frontend && bun install && bun run build",
     "cert:obtain": "bun run ./src/scripts/cert.ts obtain",
     "cert:renew": "bun run ./src/scripts/cert.ts renew",
+    "db:generate": "drizzle-kit generate",
     "dev": "bun run --watch ./src/main.ts",
     "generate-token": "bun run ./src/scripts/generate-token.ts",
     "knip": "knip-bun",
@@ -39,6 +41,7 @@
     "citty": "^0.1.6",
     "clipboardy": "^5.0.0",
     "consola": "^3.4.2",
+    "drizzle-orm": "^0.36.0",
     "fetch-event-stream": "^0.1.5",
     "gpt-tokenizer": "^3.0.1",
     "hono": "^4.9.9",
@@ -53,6 +56,7 @@
     "@types/bun": "^1.2.23",
     "@types/proxy-from-env": "^1.0.4",
     "bumpp": "^10.2.3",
+    "drizzle-kit": "^0.28.0",
     "eslint": "^9.37.0",
     "knip": "^5.64.1",
     "prettier-plugin-packagejson": "^2.5.19",

@@ -6,9 +6,11 @@ import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
+import { initDb } from "./db/client"
+import { expireOldSessions } from "./db/queries/sessions"
 import { setupAuthToken } from "./lib/auth-token"
 import { loadConfig, resolveTls } from "./lib/config"
-import { ensurePaths } from "./lib/paths"
+import { ensurePaths, PATHS } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
@@ -30,6 +32,9 @@ interface RunServerOptions {
   proxyEnv: boolean
   tlsCert?: string
   tlsKey?: string
+  dbPath?: string
+  logRetentionDays: number
+  dashboard: boolean
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -54,6 +59,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.authEnabled = !options.noAuth
 
   await ensurePaths()
+  state.dbPath = options.dbPath ?? PATHS.DB_PATH
+  state.logRetentionDays = options.logRetentionDays
+  state.dashboardEnabled = options.dashboard
+  initDb(state.dbPath)
   await cacheVSCodeVersion()
 
   if (options.githubToken) {
@@ -66,6 +75,13 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await setupCopilotToken()
   await cacheModels()
   await setupAuthToken()
+
+  setInterval(
+    () => {
+      void expireOldSessions().catch(() => {})
+    },
+    60 * 60 * 1000,
+  )
 
   consola.info(
     `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
@@ -104,7 +120,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     const command = generateEnvScript(
       {
         ANTHROPIC_BASE_URL: serverUrl,
-        ANTHROPIC_AUTH_TOKEN: state.authToken ?? "dummy",
+        ANTHROPIC_AUTH_TOKEN: state.superAdminToken ?? "dummy",
         ANTHROPIC_MODEL: selectedModel,
         ANTHROPIC_DEFAULT_SONNET_MODEL: selectedModel,
         ANTHROPIC_SMALL_FAST_MODEL: selectedSmallModel,
@@ -129,6 +145,12 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   consola.box(
     `🌐 Usage Viewer: https://ericc-ch.github.io/copilot-api?endpoint=${serverUrl}/usage`,
   )
+
+  if (state.dashboardEnabled) {
+    consola.box(
+      `📊 Dashboard: ${serverUrl}/?key=${state.superAdminToken ?? "<your-token>"}`,
+    )
+  }
 
   serve({
     fetch: server.fetch as ServerHandler,
@@ -214,6 +236,21 @@ export const start = defineCommand({
       type: "string",
       description: "Path to TLS private key file (PEM format)",
     },
+    "db-path": {
+      type: "string",
+      description:
+        "Path to SQLite DB file (default ~/.local/share/copilot-api/copilot-api.db)",
+    },
+    "log-retention-days": {
+      type: "string",
+      default: "90",
+      description: "Days to retain request_logs",
+    },
+    dashboard: {
+      type: "boolean",
+      default: true,
+      description: "Enable admin dashboard + API (--no-dashboard to disable)",
+    },
   },
   run({ args }) {
     const rateLimitRaw = args["rate-limit"]
@@ -235,6 +272,9 @@ export const start = defineCommand({
       proxyEnv: args["proxy-env"],
       tlsCert: args["tls-cert"],
       tlsKey: args["tls-key"],
+      dbPath: args["db-path"],
+      logRetentionDays: Number.parseInt(args["log-retention-days"], 10) || 90,
+      dashboard: args.dashboard,
     })
   },
 })
