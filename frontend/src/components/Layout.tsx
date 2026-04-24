@@ -18,6 +18,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/overview">Overview</NavLink>
           {me.role !== "user" && <NavLink to="/tokens">Tokens</NavLink>}
           <NavLink to="/usage">Usage</NavLink>
+          <NavLink to="/docs">Docs</NavLink>
           <NavLink to="/settings">Settings</NavLink>
           {me.role === "super" && (
             <NavLink to="/github-auth">GitHub Auth</NavLink>

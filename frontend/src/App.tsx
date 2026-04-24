@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom"
 
 import { Layout } from "./components/Layout"
 import { useAuth } from "./contexts/AuthContext"
+import { Docs } from "./pages/Docs"
 import { GithubAuth } from "./pages/GithubAuth"
 import { Login } from "./pages/Login"
 import { Overview } from "./pages/Overview"
@@ -28,6 +29,7 @@ export function App() {
         />
         <Route path="/usage" element={<Usage />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/docs" element={<Docs />} />
         <Route
           path="/github-auth"
           element={
