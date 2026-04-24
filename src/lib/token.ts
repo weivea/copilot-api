@@ -24,7 +24,7 @@ export async function deleteGithubTokenFile(): Promise<void> {
 }
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
-let bootstrapping = false
+let inflightBootstrap: Promise<void> | null = null
 
 export function stopCopilotTokenRefresh(): void {
   if (refreshTimer) {
@@ -33,10 +33,9 @@ export function stopCopilotTokenRefresh(): void {
   }
 }
 
-export async function bootstrapCopilotToken(): Promise<void> {
-  if (bootstrapping) return
-  bootstrapping = true
-  try {
+export function bootstrapCopilotToken(): Promise<void> {
+  if (inflightBootstrap) return inflightBootstrap
+  inflightBootstrap = (async () => {
     stopCopilotTokenRefresh()
     const { token, refresh_in } = await getCopilotToken()
     state.copilotToken = token
@@ -52,13 +51,16 @@ export async function bootstrapCopilotToken(): Promise<void> {
         consola.debug("Copilot token refreshed")
         if (state.showToken) consola.info("Refreshed Copilot token:", token)
       } catch (error) {
+        // Intentionally non-fatal: keep the proxy serving with the existing
+        // (possibly soon-to-expire) token rather than crashing on transient
+        // network errors. The interval will retry on its next tick.
         consola.error("Failed to refresh Copilot token:", error)
       }
     }, refreshInterval)
-  } finally {
-    // eslint-disable-next-line require-atomic-updates
-    bootstrapping = false
-  }
+  })().finally(() => {
+    inflightBootstrap = null
+  })
+  return inflightBootstrap
 }
 
 // Backwards-compatible alias used by `auth` and `check-usage` CLI commands.
@@ -114,11 +116,11 @@ export async function setupGitHubToken(
 
 export async function clearGithubToken(): Promise<void> {
   stopCopilotTokenRefresh()
-  await deleteGithubTokenFile()
   state.githubToken = undefined
   state.githubLogin = undefined
   state.copilotToken = undefined
   state.models = undefined
+  await deleteGithubTokenFile()
 }
 
 async function logUser() {
