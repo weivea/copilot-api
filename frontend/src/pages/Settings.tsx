@@ -6,13 +6,13 @@ export function Settings() {
   const [ttl, setTtl] = useState<number>(1)
 
   useEffect(() => {
-    const v = window.localStorage.getItem(TTL_KEY)
+    const v = globalThis.localStorage.getItem(TTL_KEY)
     if (v) setTtl(Number.parseInt(v, 10))
   }, [])
 
   function update(next: number) {
     setTtl(next)
-    window.localStorage.setItem(TTL_KEY, String(next))
+    globalThis.localStorage.setItem(TTL_KEY, String(next))
   }
 
   return (

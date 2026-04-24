@@ -23,7 +23,10 @@ export const adminTokensRoutes = new Hono()
 const SUPER_ADMIN_NAME = "__super_admin__"
 
 function isSuperAdminRow(row: { id: number; name: string }): boolean {
-  if (state.superAdminTokenId !== undefined && row.id === state.superAdminTokenId) {
+  if (
+    state.superAdminTokenId !== undefined
+    && row.id === state.superAdminTokenId
+  ) {
     return true
   }
   return row.name === SUPER_ADMIN_NAME

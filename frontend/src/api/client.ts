@@ -10,15 +10,12 @@ import type {
 
 const BASE = "/admin/api"
 
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(BASE + path, {
     credentials: "same-origin",
     headers: {
       "content-type": "application/json",
-      ...(init.headers ?? {}),
+      ...init.headers,
     },
     ...init,
   })
@@ -77,9 +74,7 @@ export const api = {
       `/usage/timeseries?token_id=${params.tokenId}&from=${params.from}&to=${params.to}&bucket=${params.bucket}`,
     ),
   perToken: (from: number, to: number) =>
-    request<Array<PerTokenRow>>(
-      `/usage/per-token?from=${from}&to=${to}`,
-    ),
+    request<Array<PerTokenRow>>(`/usage/per-token?from=${from}&to=${to}`),
   recent: (tokenId: number | "me" | "all", limit = 50) =>
     request<Array<RecentLog>>(
       `/usage/recent?token_id=${tokenId}&limit=${limit}`,

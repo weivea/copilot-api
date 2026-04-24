@@ -6,7 +6,7 @@ import { App } from "./App"
 import { AuthProvider } from "./contexts/AuthContext"
 import "./styles.css"
 
-const el = document.getElementById("root")
+const el = document.querySelector("#root")
 if (!el) throw new Error("root not found")
 
 createRoot(el).render(

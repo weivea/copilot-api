@@ -33,7 +33,10 @@ export function TrendChart(props: {
           <YAxis stroke="#8b93a7" />
           <Tooltip
             labelFormatter={(v) => new Date(v as number).toLocaleString()}
-            contentStyle={{ background: "#161a22", border: "1px solid #2a2f3a" }}
+            contentStyle={{
+              background: "#161a22",
+              border: "1px solid #2a2f3a",
+            }}
           />
           <Area dataKey="v" stroke="#4f8cff" fill="#4f8cff44" />
         </AreaChart>
@@ -44,9 +47,9 @@ export function TrendChart(props: {
   const tokenIds = Array.from(
     new Set(props.data.map((d) => d.authTokenId ?? 0)),
   )
-  const buckets = Array.from(new Set(props.data.map((d) => d.bucketStart))).sort(
-    (a, b) => a - b,
-  )
+  const buckets = Array.from(
+    new Set(props.data.map((d) => d.bucketStart)),
+  ).sort((a, b) => a - b)
   const rows = buckets.map((b) => {
     const row: Record<string, number> = { t: b }
     for (const id of tokenIds) {

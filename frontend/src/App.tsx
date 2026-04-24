@@ -20,7 +20,9 @@ export function App() {
         <Route
           path="/tokens"
           element={
-            me.role === "user" ? <Navigate to="/overview" replace /> : <Tokens />
+            me.role === "user" ?
+              <Navigate to="/overview" replace />
+            : <Tokens />
           }
         />
         <Route path="/usage" element={<Usage />} />

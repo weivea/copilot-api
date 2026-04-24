@@ -71,7 +71,7 @@ async function writeLog(
  * response stream has finished and final usage data has been collected.
  */
 export async function flushUsage(c: Context, status = 200): Promise<void> {
-  const tokenId = c.get("authTokenId") as number | undefined
+  const tokenId = c.get("authTokenId")
   if (tokenId === undefined) return
   const startedAt = (c.get(STARTED) as number | undefined) ?? Date.now()
   const pending = (c.get(STORE) as PendingUsage | undefined) ?? {}
@@ -107,7 +107,7 @@ export function usageRecorder(): MiddlewareHandler {
       status = 500
       throw err
     } finally {
-      const tokenId = c.get("authTokenId") as number | undefined
+      const tokenId = c.get("authTokenId")
       const deferred = c.get(DEFER) === true
       if (tokenId !== undefined && !deferred) {
         const pending = (c.get(STORE) as PendingUsage | undefined) ?? {}

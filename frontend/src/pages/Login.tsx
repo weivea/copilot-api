@@ -14,18 +14,18 @@ export function Login() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    const url = new URL(window.location.href)
+    const url = new URL(globalThis.location.href)
     const key = url.searchParams.get("key")
     if (!key) return
     const ttl = Number.parseInt(
-      window.localStorage.getItem(TTL_KEY) ?? "1",
+      globalThis.localStorage.getItem(TTL_KEY) ?? "1",
       10,
     )
     setBusy(true)
     api
-      .login(key, [1, 7, 30].includes(ttl) ? ttl : 1)
+      .login(key, [1, 30, 7].includes(ttl) ? ttl : 1)
       .then(async () => {
-        window.history.replaceState(null, "", "/")
+        globalThis.history.replaceState(null, "", "/")
         await refresh()
         nav("/overview", { replace: true })
       })
@@ -38,11 +38,11 @@ export function Login() {
     setError(null)
     setBusy(true)
     const ttl = Number.parseInt(
-      window.localStorage.getItem(TTL_KEY) ?? "1",
+      globalThis.localStorage.getItem(TTL_KEY) ?? "1",
       10,
     )
     try {
-      await api.login(keyInput, [1, 7, 30].includes(ttl) ? ttl : 1)
+      await api.login(keyInput, [1, 30, 7].includes(ttl) ? ttl : 1)
       await refresh()
       nav("/overview", { replace: true })
     } catch (err) {
@@ -74,7 +74,11 @@ export function Login() {
             autoFocus
           />
         </div>
-        {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+        {error && (
+          <div className="error" style={{ marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
         <button className="primary" disabled={busy || !keyInput}>
           {busy ? "Signing in…" : "Sign in"}
         </button>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
 
+import type { UsageSummary } from "../types"
+
 import { api } from "../api/client"
 import { useAuth } from "../contexts/AuthContext"
-import type { UsageSummary } from "../types"
 
 function Card({ label, value }: { label: string; value: string }) {
   return (
@@ -26,12 +27,13 @@ export function Overview() {
   useEffect(() => {
     if (!me) return
     const tokenId =
-      me.role === "super"
-        ? "all"
-        : me.role === "admin"
-          ? "all"
-          : "me"
-    api.summary(tokenId).then(setS).catch((e) => setErr((e as Error).message))
+      me.role === "super" ? "all"
+      : me.role === "admin" ? "all"
+      : "me"
+    api
+      .summary(tokenId)
+      .then(setS)
+      .catch((e) => setErr((e as Error).message))
   }, [me])
 
   if (!me) return null
@@ -42,16 +44,16 @@ export function Overview() {
     <div>
       <h2>Overview</h2>
       <div className="cards">
-        <Card label="Requests today" value={s.requests_today.toLocaleString()} />
+        <Card
+          label="Requests today"
+          value={s.requests_today.toLocaleString()}
+        />
         <Card label="Tokens today" value={s.tokens_today.toLocaleString()} />
         <Card
           label="Monthly used"
           value={`${s.monthly_used.toLocaleString()}${s.monthly_limit ? " / " + s.monthly_limit.toLocaleString() : ""}`}
         />
-        <Card
-          label="Monthly %"
-          value={pct(s.monthly_used, s.monthly_limit)}
-        />
+        <Card label="Monthly %" value={pct(s.monthly_used, s.monthly_limit)} />
         <Card
           label="Lifetime used"
           value={`${s.lifetime_used.toLocaleString()}${s.lifetime_limit ? " / " + s.lifetime_limit.toLocaleString() : ""}`}

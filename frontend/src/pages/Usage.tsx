@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react"
 
+import type {
+  PerTokenRow,
+  RecentLog,
+  TimeseriesPoint,
+  TokenRow,
+} from "../types"
+
 import { api } from "../api/client"
 import { PerTokenTable } from "../components/PerTokenTable"
 import {
@@ -10,12 +17,6 @@ import {
 import { TrendChart } from "../components/TrendChart"
 import { useAuth } from "../contexts/AuthContext"
 import { suggestBucket } from "../lib/bucket"
-import type {
-  PerTokenRow,
-  RecentLog,
-  TimeseriesPoint,
-  TokenRow,
-} from "../types"
 
 type Selection = "me" | "all" | number
 
@@ -23,9 +24,7 @@ export function Usage() {
   const { me } = useAuth()
   const [tokens, setTokens] = useState<Array<TokenRow>>([])
   const [selection, setSelection] = useState<Selection>("me")
-  const [range, setRange] = useState<Range>(
-    rangeFromPreset({ days: 7 }),
-  )
+  const [range, setRange] = useState<Range>(rangeFromPreset({ days: 7 }))
   const [metric, setMetric] = useState<"requests" | "tokens">("requests")
   const [series, setSeries] = useState<Array<TimeseriesPoint>>([])
   const [perToken, setPerToken] = useState<Array<PerTokenRow>>([])
@@ -36,7 +35,10 @@ export function Usage() {
 
   useEffect(() => {
     if (!isAdmin) return
-    api.listTokens().then(setTokens).catch((e) => setError((e as Error).message))
+    api
+      .listTokens()
+      .then(setTokens)
+      .catch((e) => setError((e as Error).message))
   }, [isAdmin])
 
   const bucket = useMemo(
@@ -84,7 +86,9 @@ export function Usage() {
             value={String(selection)}
             onChange={(e) => {
               const v = e.target.value
-              setSelection(v === "me" || v === "all" ? v : Number.parseInt(v, 10))
+              setSelection(
+                v === "me" || v === "all" ? v : Number.parseInt(v, 10),
+              )
             }}
           >
             <option value="me">Me</option>
