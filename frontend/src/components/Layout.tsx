@@ -15,7 +15,6 @@ export function Layout({ children }: { children: ReactNode }) {
           <div className="role">{me.role}</div>
         </div>
         <nav>
-          <NavLink to="/overview">Overview</NavLink>
           {me.role !== "user" && <NavLink to="/tokens">Tokens</NavLink>}
           <NavLink to="/usage">Usage</NavLink>
           <NavLink to="/copilot-models">Models</NavLink>

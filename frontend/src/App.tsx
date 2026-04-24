@@ -6,7 +6,6 @@ import { Docs } from "./pages/Docs"
 import { GithubAuth } from "./pages/GithubAuth"
 import { Login } from "./pages/Login"
 import { Models } from "./pages/Models"
-import { Overview } from "./pages/Overview"
 import { Settings } from "./pages/Settings"
 import { Tokens } from "./pages/Tokens"
 import { Usage } from "./pages/Usage"
@@ -18,13 +17,13 @@ export function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Navigate to="/overview" replace />} />
-        <Route path="/overview" element={<Overview />} />
+        <Route path="/" element={<Navigate to="/usage" replace />} />
+        <Route path="/overview" element={<Navigate to="/usage" replace />} />
         <Route
           path="/tokens"
           element={
             me.role === "user" ?
-              <Navigate to="/overview" replace />
+              <Navigate to="/usage" replace />
             : <Tokens />
           }
         />
@@ -37,10 +36,10 @@ export function App() {
           element={
             me.role === "super" ?
               <GithubAuth />
-            : <Navigate to="/overview" replace />
+            : <Navigate to="/usage" replace />
           }
         />
-        <Route path="*" element={<Navigate to="/overview" replace />} />
+        <Route path="*" element={<Navigate to="/usage" replace />} />
       </Routes>
     </Layout>
   )
