@@ -143,9 +143,16 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   if (state.dashboardEnabled) {
-    consola.box(
-      `📊 Dashboard: ${serverUrl}/?key=${state.superAdminToken ?? "<your-token>"}`,
-    )
+    const lines =
+      state.authEnabled ?
+        [
+          "📊 Dashboard ready",
+          `  URL:   ${serverUrl}/`,
+          `  Token: see the "Super admin token" line above, or rerun with --show-token`,
+          "  Open the URL, then paste the token into the login form.",
+        ]
+      : ["📊 Dashboard ready", `  URL:   ${serverUrl}/`, "  Auth: disabled"]
+    consola.box(lines.join("\n"))
   }
 
   serve({
