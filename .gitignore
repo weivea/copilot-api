@@ -27,3 +27,4 @@ copilot-api.log
 
 # Frontend
 frontend/node_modules
+frontend/tsconfig.tsbuildinfo
