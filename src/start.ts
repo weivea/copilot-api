@@ -4,7 +4,6 @@ import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
 import { serve, type ServerHandler } from "srvx"
-import invariant from "tiny-invariant"
 
 import { initDb } from "./db/client"
 import { expireOldSessions } from "./db/queries/sessions"
@@ -14,7 +13,7 @@ import { ensurePaths, PATHS } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
-import { setupCopilotToken, setupGitHubToken } from "./lib/token"
+import { bootstrapCopilotToken, setupGitHubToken } from "./lib/token"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
 import { server } from "./server"
 
@@ -69,11 +68,17 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     state.githubToken = options.githubToken
     consola.info("Using provided GitHub token")
   } else {
-    await setupGitHubToken()
+    await setupGitHubToken({ optional: true })
   }
 
-  await setupCopilotToken()
-  await cacheModels()
+  if (state.githubToken) {
+    await bootstrapCopilotToken()
+    await cacheModels()
+  } else {
+    consola.warn(
+      "Copilot endpoints disabled until GitHub login completes via dashboard",
+    )
+  }
   await setupAuthToken()
 
   setInterval(
@@ -83,9 +88,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     60 * 60 * 1000,
   )
 
-  consola.info(
-    `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
-  )
+  if (state.models) {
+    consola.info(
+      `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
+    )
+  }
 
   const config = await loadConfig()
   const tls = resolveTls(config, options.tlsCert, options.tlsKey)
@@ -99,46 +106,50 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   if (options.claudeCode) {
-    invariant(state.models, "Models should be loaded by now")
-
-    const selectedModel = await consola.prompt(
-      "Select a model to use with Claude Code",
-      {
-        type: "select",
-        options: state.models.data.map((model) => model.id),
-      },
-    )
-
-    const selectedSmallModel = await consola.prompt(
-      "Select a small model to use with Claude Code",
-      {
-        type: "select",
-        options: state.models.data.map((model) => model.id),
-      },
-    )
-
-    const command = generateEnvScript(
-      {
-        ANTHROPIC_BASE_URL: serverUrl,
-        ANTHROPIC_AUTH_TOKEN: state.superAdminToken ?? "dummy",
-        ANTHROPIC_MODEL: selectedModel,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: selectedModel,
-        ANTHROPIC_SMALL_FAST_MODEL: selectedSmallModel,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: selectedSmallModel,
-        DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      },
-      "claude",
-    )
-
-    try {
-      clipboard.writeSync(command)
-      consola.success("Copied Claude Code command to clipboard!")
-    } catch {
+    if (!state.models) {
       consola.warn(
-        "Failed to copy to clipboard. Here is the Claude Code command:",
+        "Skipping --claude-code setup: GitHub login not completed. Sign in via dashboard, then rerun with --claude-code.",
       )
-      consola.log(command)
+    } else {
+      const selectedModel = await consola.prompt(
+        "Select a model to use with Claude Code",
+        {
+          type: "select",
+          options: state.models.data.map((model) => model.id),
+        },
+      )
+
+      const selectedSmallModel = await consola.prompt(
+        "Select a small model to use with Claude Code",
+        {
+          type: "select",
+          options: state.models.data.map((model) => model.id),
+        },
+      )
+
+      const command = generateEnvScript(
+        {
+          ANTHROPIC_BASE_URL: serverUrl,
+          ANTHROPIC_AUTH_TOKEN: state.superAdminToken ?? "dummy",
+          ANTHROPIC_MODEL: selectedModel,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: selectedModel,
+          ANTHROPIC_SMALL_FAST_MODEL: selectedSmallModel,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: selectedSmallModel,
+          DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+        },
+        "claude",
+      )
+
+      try {
+        clipboard.writeSync(command)
+        consola.success("Copied Claude Code command to clipboard!")
+      } catch {
+        consola.warn(
+          "Failed to copy to clipboard. Here is the Claude Code command:",
+        )
+        consola.log(command)
+      }
     }
   }
 
@@ -152,6 +163,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
           "  Open the URL, then paste the token into the login form.",
         ]
       : ["📊 Dashboard ready", `  URL:   ${serverUrl}/`, "  Auth: disabled"]
+    if (!state.githubToken) {
+      lines.push("  GitHub: not connected — sign in at /github-auth")
+    }
     consola.box(lines.join("\n"))
   }
 
