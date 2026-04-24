@@ -16,7 +16,7 @@ function isToolBlockOpen(state: AnthropicStreamState): boolean {
   )
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity
+// eslint-disable-next-line complexity
 export function translateChunkToAnthropicEvents(
   chunk: ChatCompletionChunk,
   state: AnthropicStreamState,
