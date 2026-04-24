@@ -75,8 +75,8 @@ async function tryReadConfig(filePath: string): Promise<AppConfig | null> {
 /**
  * Loads config with the following priority:
  * 1. Explicit path (--config CLI arg)
- * 2. Project root: ./copilot-api.config.json
- * 3. Global: ~/.local/share/copilot-api/copilot-api.config.json
+ * 2. Global: ~/.local/share/copilot-api/copilot-api.config.json
+ * 3. Project root: ./copilot-api.config.json
  */
 export async function loadConfig(configPath?: string): Promise<AppConfig> {
   if (configPath) {
@@ -86,12 +86,12 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     return {}
   }
 
+  const globalConfig = await tryReadConfig(PATHS.CONFIG_PATH)
+  if (globalConfig) return globalConfig
+
   const projectPath = path.resolve(process.cwd(), PROJECT_CONFIG_FILENAME)
   const projectConfig = await tryReadConfig(projectPath)
   if (projectConfig) return projectConfig
-
-  const globalConfig = await tryReadConfig(PATHS.CONFIG_PATH)
-  if (globalConfig) return globalConfig
 
   consola.debug("No config file found, using defaults")
   return {}
