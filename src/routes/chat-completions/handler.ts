@@ -8,7 +8,7 @@ import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
-import { isNullish } from "~/lib/utils"
+import { isNullish, formatErrorWithCause } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionResponse,
@@ -200,7 +200,22 @@ export async function handleCompletion(c: Context) {
     }
   }
 
-  const response = await createChatCompletions(payload)
+  // AbortController governs the upstream fetch so we can cancel cleanly on
+  // client disconnect; otherwise an orphaned upstream socket eventually shows
+  // up as "socket closed unexpectedly" on the client side.
+  const upstreamController = new AbortController()
+  let response: Awaited<ReturnType<typeof createChatCompletions>>
+  try {
+    response = await createChatCompletions(payload, {
+      signal: upstreamController.signal,
+    })
+  } catch (error) {
+    consola.error(
+      "Upstream chat completions failed:",
+      formatErrorWithCause(error),
+    )
+    throw error
+  }
 
   if (isNonStreaming(response)) {
     recordUsage(c, {
@@ -216,24 +231,44 @@ export async function handleCompletion(c: Context) {
   deferUsage(c)
   return streamSSE(
     c,
-    (stream) => pipeOpenAIStream(stream, response, usage, c, payload.model),
+    (stream) =>
+      pipeOpenAIStream(stream, {
+        response,
+        usage,
+        c,
+        model: payload.model,
+        upstreamController,
+      }),
     (error) => {
-      consola.error("streamSSE onError (chat-completions):", error)
+      consola.error(
+        "streamSSE onError (chat-completions):",
+        formatErrorWithCause(error),
+      )
       return Promise.resolve()
     },
   )
 }
 
+interface PipeOpenAIStreamCtx {
+  response: AsyncIterable<{ data?: string }>
+  usage: { prompt: number; completion: number; total: number }
+  c: Context
+  model: string
+  upstreamController: AbortController
+}
+
 async function pipeOpenAIStream(
   stream: SSEStreamingApi,
-  response: AsyncIterable<{ data?: string }>,
-  usage: { prompt: number; completion: number; total: number },
-  c: Context,
-  model: string,
+  ctx: PipeOpenAIStreamCtx,
 ): Promise<void> {
+  const { response, usage, c, model, upstreamController } = ctx
   const abortState = { aborted: false }
+  // Idempotency guard: protect the post-error writes from being entered twice
+  // if the catch path and a subsequent fault both fire.
+  const finalizerState = { ran: false }
   stream.onAbort(() => {
     abortState.aborted = true
+    upstreamController.abort()
   })
 
   // Keep-alive comment frames so proxies don't close idle sockets while
@@ -265,8 +300,12 @@ async function pipeOpenAIStream(
       await stream.writeSSE({ data: chunk.data })
     }
   } catch (error) {
-    consola.error("Upstream stream error, closing gracefully:", error)
-    if (!abortState.aborted) {
+    consola.error(
+      "Upstream stream error, closing gracefully:",
+      formatErrorWithCause(error),
+    )
+    if (!abortState.aborted && !finalizerState.ran) {
+      finalizerState.ran = true
       const message = error instanceof Error ? error.message : String(error)
       try {
         await stream.writeSSE({
@@ -281,6 +320,7 @@ async function pipeOpenAIStream(
     }
   } finally {
     clearInterval(pingInterval)
+    upstreamController.abort()
     recordUsage(c, {
       model,
       promptTokens: usage.prompt || null,

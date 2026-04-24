@@ -7,6 +7,7 @@ import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
+import { formatErrorWithCause } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -39,7 +40,22 @@ export async function handleCompletion(c: Context) {
     await awaitApproval()
   }
 
-  const response = await createChatCompletions(openAIPayload)
+  // Single AbortController governs the upstream fetch. Aborted on client
+  // disconnect or in finally so we never leave the upstream socket dangling
+  // (which surfaces back as "socket closed unexpectedly" on subsequent ops).
+  const upstreamController = new AbortController()
+  let response: Awaited<ReturnType<typeof createChatCompletions>>
+  try {
+    response = await createChatCompletions(openAIPayload, {
+      signal: upstreamController.signal,
+    })
+  } catch (error) {
+    consola.error(
+      "Upstream chat completions failed:",
+      formatErrorWithCause(error),
+    )
+    throw error
+  }
 
   if (isNonStreaming(response)) {
     consola.debug(
@@ -66,18 +82,30 @@ export async function handleCompletion(c: Context) {
   return streamSSE(
     c,
     (stream) =>
-      runAnthropicStream(stream, response, usage, c, openAIPayload.model),
+      runAnthropicStream(stream, {
+        response,
+        usage,
+        c,
+        model: openAIPayload.model,
+        upstreamController,
+      }),
     (error, stream) => handleAnthropicStreamFatalError(error, stream),
   )
 }
 
+interface RunAnthropicStreamCtx {
+  response: AsyncIterable<{ data?: string }>
+  usage: { prompt: number; completion: number; total: number }
+  c: Context
+  model: string
+  upstreamController: AbortController
+}
+
 async function runAnthropicStream(
   stream: SSEStreamingApi,
-  response: AsyncIterable<{ data?: string }>,
-  usage: { prompt: number; completion: number; total: number },
-  c: Context,
-  model: string,
+  ctx: RunAnthropicStreamCtx,
 ): Promise<void> {
+  const { response, usage, c, model, upstreamController } = ctx
   const streamState: AnthropicStreamState = {
     messageStartSent: false,
     contentBlockIndex: 0,
@@ -86,9 +114,14 @@ async function runAnthropicStream(
   }
 
   const abortState = { aborted: false }
+  // Idempotency guard: both the catch path and Hono's onError can call the
+  // finalizer. Only the first one is allowed to write end-of-stream events.
+  const finalizerState = { ran: false }
   stream.onAbort(() => {
     abortState.aborted = true
     consola.debug("Client aborted Anthropic stream")
+    // Cancel upstream immediately so we don't keep an orphan socket open.
+    upstreamController.abort()
   })
 
   // Periodic SSE ping to keep intermediaries from closing the socket
@@ -135,12 +168,22 @@ async function runAnthropicStream(
       }
     }
   } catch (error) {
-    consola.error("Upstream stream error, closing gracefully:", error)
+    consola.error(
+      "Upstream stream error, closing gracefully:",
+      formatErrorWithCause(error),
+    )
     if (!abortState.aborted) {
-      await emitAnthropicStreamError(stream, streamState, error)
+      await emitAnthropicStreamError(stream, {
+        streamState,
+        error,
+        finalizerState,
+      })
     }
   } finally {
     clearInterval(pingInterval)
+    // Make sure the upstream socket is released even on the happy path —
+    // calling abort() after the body is fully consumed is a no-op.
+    upstreamController.abort()
     recordUsage(c, {
       model,
       promptTokens: usage.prompt || null,
@@ -155,28 +198,38 @@ async function handleAnthropicStreamFatalError(
   error: Error,
   stream: SSEStreamingApi,
 ): Promise<void> {
-  consola.error("streamSSE onError:", error)
+  consola.error("streamSSE onError:", formatErrorWithCause(error))
   try {
-    await emitAnthropicStreamError(
-      stream,
-      {
+    await emitAnthropicStreamError(stream, {
+      streamState: {
         messageStartSent: true,
         contentBlockIndex: 0,
         contentBlockOpen: false,
         toolCalls: {},
       },
       error,
-    )
+      // Fresh guard — onError fires only when the inner runner already threw
+      // past its own try/catch, so it's safe to attempt one final write.
+      finalizerState: { ran: false },
+    })
   } catch {
     /* ignore */
   }
 }
 
+interface EmitErrorCtx {
+  streamState: AnthropicStreamState
+  error: unknown
+  finalizerState: { ran: boolean }
+}
+
 async function emitAnthropicStreamError(
   stream: SSEStreamingApi,
-  streamState: AnthropicStreamState,
-  error: unknown,
+  ctx: EmitErrorCtx,
 ): Promise<void> {
+  const { streamState, error, finalizerState } = ctx
+  if (finalizerState.ran) return
+  finalizerState.ran = true
   if (stream.closed) return
   const message = error instanceof Error ? error.message : String(error)
 
