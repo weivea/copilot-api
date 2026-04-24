@@ -4,7 +4,6 @@ import {
   type AnthropicStreamEventData,
   type AnthropicStreamState,
 } from "./anthropic-types"
-import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 function isToolBlockOpen(state: AnthropicStreamState): boolean {
   if (!state.contentBlockOpen) {
@@ -143,6 +142,12 @@ export function translateChunkToAnthropicEvents(
   }
 
   if (choice.finish_reason) {
+    // Capture stop_reason but do NOT emit message_delta / message_stop here.
+    // The handler emits the closing events in its finally block so that:
+    //   1) usage is sourced from the aggregated counters (some upstreams put
+    //      `usage` in a separate chunk after `finish_reason`); and
+    //   2) emission is guaranteed exactly once even on early disconnect.
+    state.finishReason = choice.finish_reason
     if (state.contentBlockOpen) {
       events.push({
         type: "content_block_stop",
@@ -150,30 +155,6 @@ export function translateChunkToAnthropicEvents(
       })
       state.contentBlockOpen = false
     }
-
-    events.push(
-      {
-        type: "message_delta",
-        delta: {
-          stop_reason: mapOpenAIStopReasonToAnthropic(choice.finish_reason),
-          stop_sequence: null,
-        },
-        usage: {
-          input_tokens:
-            (chunk.usage?.prompt_tokens ?? 0)
-            - (chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0),
-          output_tokens: chunk.usage?.completion_tokens ?? 0,
-          ...(chunk.usage?.prompt_tokens_details?.cached_tokens
-            !== undefined && {
-            cache_read_input_tokens:
-              chunk.usage.prompt_tokens_details.cached_tokens,
-          }),
-        },
-      },
-      {
-        type: "message_stop",
-      },
-    )
   }
 
   return events

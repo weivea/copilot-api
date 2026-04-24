@@ -23,6 +23,7 @@ import {
   translateToOpenAI,
 } from "./non-stream-translation"
 import { translateChunkToAnthropicEvents } from "./stream-translation"
+import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
@@ -77,7 +78,7 @@ export async function handleCompletion(c: Context) {
   }
 
   consola.debug("Streaming response from Copilot")
-  const usage = { prompt: 0, completion: 0, total: 0 }
+  const usage = { prompt: 0, completion: 0, total: 0, cached: 0 }
   deferUsage(c)
   return streamSSE(
     c,
@@ -95,7 +96,7 @@ export async function handleCompletion(c: Context) {
 
 interface RunAnthropicStreamCtx {
   response: AsyncIterable<{ data?: string }>
-  usage: { prompt: number; completion: number; total: number }
+  usage: { prompt: number; completion: number; total: number; cached: number }
   c: Context
   model: string
   upstreamController: AbortController
@@ -152,10 +153,11 @@ async function runAnthropicStream(
 
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
       if ((chunk as any).usage) {
-        usage.prompt = (chunk as any).usage.prompt_tokens ?? usage.prompt
-        usage.completion =
-          (chunk as any).usage.completion_tokens ?? usage.completion
-        usage.total = (chunk as any).usage.total_tokens ?? usage.total
+        const u = (chunk as any).usage
+        usage.prompt = u.prompt_tokens ?? usage.prompt
+        usage.completion = u.completion_tokens ?? usage.completion
+        usage.total = u.total_tokens ?? usage.total
+        usage.cached = u.prompt_tokens_details?.cached_tokens ?? usage.cached
       }
       const events = translateChunkToAnthropicEvents(chunk, streamState)
 
@@ -184,13 +186,61 @@ async function runAnthropicStream(
     // Make sure the upstream socket is released even on the happy path —
     // calling abort() after the body is fully consumed is a no-op.
     upstreamController.abort()
+
+    // Emit the closing message_delta + message_stop with the AGGREGATED
+    // usage we collected across all chunks. This guarantees the client sees
+    // the final input/output token counts even when upstream puts `usage`
+    // in a chunk separate from `finish_reason`.
+    if (
+      !abortState.aborted
+      && !stream.closed
+      && !streamState.finalEventsSent
+      && !finalizerState.ran
+    ) {
+      streamState.finalEventsSent = true
+      const writeSafe = async (event: string, data: unknown) => {
+        try {
+          await stream.writeSSE({ event, data: JSON.stringify(data) })
+        } catch {
+          /* ignore */
+        }
+      }
+      if (streamState.contentBlockOpen) {
+        await writeSafe("content_block_stop", {
+          type: "content_block_stop",
+          index: streamState.contentBlockIndex,
+        })
+        streamState.contentBlockOpen = false
+      }
+      const inputTokens = Math.max(0, usage.prompt - usage.cached)
+      await writeSafe("message_delta", {
+        type: "message_delta",
+        delta: {
+          stop_reason: mapOpenAIStopReasonToAnthropic(
+            (streamState.finishReason ?? "stop") as
+              | "stop"
+              | "length"
+              | "tool_calls"
+              | "content_filter",
+          ),
+          stop_sequence: null,
+        },
+        usage: {
+          input_tokens: inputTokens,
+          output_tokens: usage.completion,
+          ...(usage.cached > 0 && { cache_read_input_tokens: usage.cached }),
+        },
+      })
+      await writeSafe("message_stop", { type: "message_stop" })
+    }
+
     recordUsage(c, {
       model,
       promptTokens: usage.prompt || null,
       completionTokens: usage.completion || null,
       totalTokens: usage.total || null,
     })
-    await flushUsage(c)
+    flushUsage(c)
   }
 }
 
@@ -230,6 +280,8 @@ async function emitAnthropicStreamError(
   const { streamState, error, finalizerState } = ctx
   if (finalizerState.ran) return
   finalizerState.ran = true
+  // Block the happy-path finalizer in handler from also emitting close events.
+  streamState.finalEventsSent = true
   if (stream.closed) return
   const message = error instanceof Error ? error.message : String(error)
 

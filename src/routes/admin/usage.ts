@@ -1,15 +1,20 @@
-import { Hono } from "hono"
+import { type Context, Hono } from "hono"
 import { z } from "zod"
 
 import { getAuthTokenById, listAuthTokens } from "~/db/queries/auth-tokens"
 import {
+  aggregateUsagePerTokenSince,
+  aggregateUsageSince,
   countRequestsSince,
   recentLogs,
   sumTokensSince,
   timeseriesByBucket,
   type Bucket,
 } from "~/db/queries/request-logs"
-import { latestUsageReset } from "~/db/queries/usage-resets"
+import {
+  latestUsageReset,
+  latestUsageResetsByKind,
+} from "~/db/queries/usage-resets"
 import { sessionMiddleware } from "~/lib/session"
 
 export const adminUsageRoutes = new Hono()
@@ -29,12 +34,14 @@ function startOfMonthMs(): number {
   return d.getTime()
 }
 
-function resolveTokenId(
-  c: any,
-  raw: string | undefined,
-): { kind: "all" | "id"; id?: number } | { error: Response } {
+type ResolveResult =
+  | { kind: "all" }
+  | { kind: "id"; id: number }
+  | { error: Response }
+
+function resolveTokenId(c: Context, raw: string | undefined): ResolveResult {
   const role = c.get("sessionRole")
-  const sessionTokenId = c.get("sessionTokenId") as number | null | undefined
+  const sessionTokenId = c.get("sessionTokenId")
   if (raw === "all") {
     if (role !== "admin" && role !== "super") {
       return {
@@ -82,29 +89,38 @@ adminUsageRoutes.get("/summary", async (c) => {
   const resolved = resolveTokenId(c, c.req.query("token_id"))
   if ("error" in resolved) return resolved.error
   if (resolved.kind === "all") {
-    // Aggregate across all DB tokens
-    const rows = await listAuthTokens()
+    // Aggregate across all DB tokens — single SQL queries instead of N+1.
     const todayStart = startOfTodayMs()
-    let reqToday = 0
-    let tokToday = 0
+    const monthStart = startOfMonthMs()
+    const [today, monthly, resets, rows] = await Promise.all([
+      aggregateUsageSince(todayStart),
+      aggregateUsagePerTokenSince(monthStart),
+      latestUsageResetsByKind("monthly"),
+      listAuthTokens(),
+    ])
+
+    // Apply per-token monthly reset (anyone reset after start-of-month
+    // restarts their monthly counter; we conservatively re-query those).
     let monthlyUsed = 0
     for (const r of rows) {
-      reqToday += await countRequestsSince(r.id, todayStart)
-      tokToday += await sumTokensSince(r.id, todayStart)
-      const reset = await latestUsageReset(r.id, "monthly")
-      const since = Math.max(startOfMonthMs(), reset)
-      monthlyUsed += await sumTokensSince(r.id, since)
+      const reset = resets.get(r.id) ?? 0
+      monthlyUsed +=
+        reset > monthStart ?
+          // Token was reset mid-month; recompute its slice precisely.
+          await sumTokensSince(r.id, reset)
+        : (monthly.get(r.id)?.tokens ?? 0)
     }
+
     return c.json({
-      requests_today: reqToday,
-      tokens_today: tokToday,
+      requests_today: today.requests,
+      tokens_today: today.tokens,
       monthly_used: monthlyUsed,
       monthly_limit: null,
       lifetime_used: rows.reduce((s, r) => s + r.lifetimeTokenUsed, 0),
       lifetime_limit: null,
     })
   }
-  const id = resolved.id!
+  const id = resolved.id
   const tok = await getAuthTokenById(id)
   if (!tok) {
     return c.json(
@@ -163,25 +179,24 @@ adminUsageRoutes.get("/per-token", async (c) => {
     )
   }
   const from = Number.parseInt(c.req.query("from") ?? "0", 10)
-  const to = Number.parseInt(c.req.query("to") ?? String(Date.now() + 1), 10)
-  const rows = await listAuthTokens()
-  const out = []
-  for (const r of rows) {
-    const requests = await countRequestsSince(r.id, from)
-    const tokens = await sumTokensSince(r.id, from)
-    out.push({
+  const [rows, agg] = await Promise.all([
+    listAuthTokens(),
+    aggregateUsagePerTokenSince(from),
+  ])
+  const out = rows.map((r) => {
+    const a = agg.get(r.id) ?? { requests: 0, tokens: 0 }
+    return {
       id: r.id,
       name: r.name,
-      requests,
-      tokens,
+      requests: a.requests,
+      tokens: a.tokens,
       monthly_pct:
         r.monthlyTokenLimit && r.monthlyTokenLimit > 0 ?
-          Math.min(100, Math.round((tokens / r.monthlyTokenLimit) * 100))
+          Math.min(100, Math.round((a.tokens / r.monthlyTokenLimit) * 100))
         : null,
       last_used_at: r.lastUsedAt,
-    })
-    void to
-  }
+    }
+  })
   return c.json(out)
 })
 

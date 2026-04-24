@@ -284,11 +284,20 @@ export function translateToAnthropic(
   // Merge content from all choices
   const allTextBlocks: Array<AnthropicTextBlock> = []
   const allToolUseBlocks: Array<AnthropicToolUseBlock> = []
-  let stopReason: "stop" | "length" | "tool_calls" | "content_filter" | null =
-    null // default
-  stopReason = response.choices[0]?.finish_reason ?? stopReason
 
-  // Process all choices to extract text and tool use blocks
+  type OpenAIStop = "stop" | "length" | "tool_calls" | "content_filter"
+  // Priority: tool_calls > length > content_filter > stop. We pick the
+  // highest-priority finish_reason across all choices so that — for example —
+  // when one choice ended with a tool call and another stopped naturally, the
+  // Anthropic-side stop_reason still surfaces the tool call.
+  const STOP_PRIORITY: Record<OpenAIStop, number> = {
+    tool_calls: 3,
+    length: 2,
+    content_filter: 1,
+    stop: 0,
+  }
+  let stopReason: OpenAIStop | null = null
+
   for (const choice of response.choices) {
     const textBlocks = getAnthropicTextBlocks(choice.message.content)
     const toolUseBlocks = getAnthropicToolUseBlocks(choice.message.tool_calls)
@@ -296,9 +305,9 @@ export function translateToAnthropic(
     allTextBlocks.push(...textBlocks)
     allToolUseBlocks.push(...toolUseBlocks)
 
-    // Use the finish_reason from the first choice, or prioritize tool_calls
-    if (choice.finish_reason === "tool_calls" || stopReason === "stop") {
-      stopReason = choice.finish_reason
+    const fr = choice.finish_reason as OpenAIStop | null | undefined
+    if (fr && (stopReason === null || STOP_PRIORITY[fr] > STOP_PRIORITY[stopReason])) {
+      stopReason = fr
     }
   }
 

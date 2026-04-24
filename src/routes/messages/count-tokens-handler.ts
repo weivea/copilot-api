@@ -6,6 +6,11 @@ import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage-recorder"
 
+// `/v1/messages/count_tokens` is a *local* estimation endpoint — it never hits
+// the upstream GitHub Copilot API, so it must NOT be counted against the
+// caller's monthly / lifetime quota. We still record the request for audit
+// purposes (model + estimated input_tokens), but mark it non-billable so
+// `incrementLifetimeUsed` is skipped in the recorder.
 import { type AnthropicMessagesPayload } from "./anthropic-types"
 import { translateToOpenAI } from "./non-stream-translation"
 
@@ -26,7 +31,10 @@ export async function handleCountTokens(c: Context) {
 
     if (!selectedModel) {
       consola.warn("Model not found, returning default token count")
-      recordUsage(c, { model: anthropicPayload.model ?? null })
+      recordUsage(c, {
+        model: anthropicPayload.model,
+        billable: false,
+      })
       return c.json({
         input_tokens: 1,
       })
@@ -61,9 +69,10 @@ export async function handleCountTokens(c: Context) {
     consola.info("Token count:", finalTokenCount)
 
     recordUsage(c, {
-      model: anthropicPayload.model ?? null,
+      model: anthropicPayload.model,
       promptTokens: finalTokenCount,
       totalTokens: finalTokenCount,
+      billable: false,
     })
 
     return c.json({

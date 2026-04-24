@@ -17,7 +17,7 @@ const configSchema = z.object({
 
 export type AppConfig = z.infer<typeof configSchema>
 
-const LOCAL_CONFIG_NAME = "copilot-api.config.json"
+const PROJECT_CONFIG_FILENAME = "copilot-api.config.json"
 
 export const CERTS_DIR = ".certs"
 
@@ -88,17 +88,12 @@ export async function loadConfig(configPath?: string): Promise<AppConfig> {
     return {}
   }
 
-  const localPath = path.resolve(process.cwd(), LOCAL_CONFIG_NAME)
-  const localConfig = await tryReadConfig(localPath)
-  if (localConfig) return localConfig
+  const projectPath = path.resolve(process.cwd(), PROJECT_CONFIG_FILENAME)
+  const projectConfig = await tryReadConfig(projectPath)
+  if (projectConfig) return projectConfig
 
-  const globalConfigPath: unknown = PATHS.CONFIG_PATH
-  if (typeof globalConfigPath === "string") {
-    const globalConfig = await tryReadConfig(globalConfigPath)
-    if (globalConfig) return globalConfig
-  } else {
-    consola.warn("Global config path is not a string, skipping global config")
-  }
+  const globalConfig = await tryReadConfig(PATHS.CONFIG_PATH)
+  if (globalConfig) return globalConfig
 
   consola.debug("No config file found, using defaults")
   return {}

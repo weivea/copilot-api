@@ -203,4 +203,10 @@ export interface AnthropicStreamState {
       anthropicBlockIndex: number
     }
   }
+  // Track whether the handler has already emitted the closing
+  // message_delta + message_stop events, so the finally-path doesn't
+  // double-emit.
+  finalEventsSent?: boolean
+  // Captured stop_reason from upstream (last non-null finish_reason).
+  finishReason?: string | null
 }

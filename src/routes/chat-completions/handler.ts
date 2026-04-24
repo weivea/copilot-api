@@ -24,84 +24,107 @@ function isGptModel(model: string): boolean {
   )
 }
 
-function hasThinkingBlock(obj: any): boolean {
-  if (!obj || typeof obj !== "object") return false
-  if (obj.type === "thinking") return true
-  if (Array.isArray(obj)) return obj.some(hasThinkingBlock)
-  // Check all values of the object
-  return Object.values(obj).some(hasThinkingBlock)
+interface ThinkingBlock {
+  type: "thinking"
+  [k: string]: unknown
+}
+interface TextBlock {
+  type: "text"
+  text: string
+  [k: string]: unknown
+}
+type ContentBlock =
+  | ThinkingBlock
+  | TextBlock
+  | { type: string; [k: string]: unknown }
+type MessageContent =
+  | string
+  | Array<ContentBlock>
+  | ContentBlock
+  | null
+  | undefined
+
+function isThinkingBlock(value: unknown): value is ThinkingBlock {
+  return (
+    typeof value === "object"
+    && value !== null
+    && (value as { type?: unknown }).type === "thinking"
+  )
 }
 
-function removeThinkingBlocks(content: any): any {
+function hasThinkingBlock(obj: unknown): boolean {
+  if (!obj || typeof obj !== "object") return false
+  if (isThinkingBlock(obj)) return true
+  if (Array.isArray(obj)) return obj.some((v) => hasThinkingBlock(v))
+  return Object.values(obj as Record<string, unknown>).some((v) =>
+    hasThinkingBlock(v),
+  )
+}
+
+function collapseFiltered(filtered: Array<ContentBlock>): MessageContent {
+  if (filtered.length === 0) return ""
+  const first = filtered[0]
+  if (
+    filtered.length === 1
+    && first.type === "text"
+    && typeof (first as TextBlock).text === "string"
+  ) {
+    return (first as TextBlock).text
+  }
+  return filtered
+}
+
+function removeThinkingBlocks(content: MessageContent): MessageContent {
   if (!content) return content
 
   // Array: filter out thinking blocks
   if (Array.isArray(content)) {
-    const filtered = content.filter((item: any) => {
-      if (item && typeof item === "object" && item.type === "thinking")
-        return false
-      return true
-    })
-    if (filtered.length === 0) return ""
-    if (
-      filtered.length === 1
-      && filtered[0]?.type === "text"
-      && typeof filtered[0]?.text === "string"
-    ) {
-      return filtered[0].text
-    }
-    return filtered
+    const filtered = content.filter((item) => !isThinkingBlock(item))
+    return collapseFiltered(filtered)
   }
 
   // String: try parsing as JSON in case thinking blocks are serialized
   if (typeof content === "string") {
     try {
-      const parsed = JSON.parse(content)
-      if (
-        Array.isArray(parsed)
-        && parsed.some((b: any) => b?.type === "thinking")
-      ) {
-        const filtered = parsed.filter((b: any) => !(b?.type === "thinking"))
-        if (filtered.length === 0) return ""
-        if (filtered.length === 1 && filtered[0]?.type === "text")
-          return filtered[0].text
-        return filtered
+      const parsed: unknown = JSON.parse(content)
+      if (Array.isArray(parsed) && parsed.some((b) => isThinkingBlock(b))) {
+        const filtered = (parsed as Array<ContentBlock>).filter(
+          (b) => !isThinkingBlock(b),
+        )
+        return collapseFiltered(filtered)
       }
-    } catch {}
+    } catch {
+      /* not JSON — return original below */
+    }
     return content
   }
 
   // Object (not array): if it IS a thinking block, return empty
-  if (typeof content === "object" && content.type === "thinking") return ""
+  if (isThinkingBlock(content)) return ""
 
   return content
 }
 
-function stripThinkingBlocks(messages: Array<any>): Array<any> {
+interface ChatMessage {
+  role?: string
+  content?: MessageContent
+  reasoning_text?: unknown
+  [k: string]: unknown
+}
+
+function stripThinkingBlocks(messages: Array<ChatMessage>): Array<ChatMessage> {
   let totalStripped = 0
-  const result = messages.map((msg, idx) => {
+  const result = messages.map((msg) => {
     if (!msg.content) return msg
-
-    const had = hasThinkingBlock(msg.content)
-    if (!had) return msg
-
+    if (!hasThinkingBlock(msg.content)) return msg
     totalStripped++
-    consola.info(
-      "Stripping thinking from msg["
-        + idx
-        + "] role="
-        + msg.role
-        + " contentType="
-        + typeof msg.content
-        + " isArray="
-        + Array.isArray(msg.content),
-    )
-    const cleaned = removeThinkingBlocks(msg.content)
-    return { ...msg, content: cleaned }
+    return { ...msg, content: removeThinkingBlocks(msg.content) }
   })
-  consola.info(
-    "stripThinkingBlocks: messages with thinking stripped = " + totalStripped,
-  )
+  if (totalStripped > 0) {
+    consola.debug(
+      `stripThinkingBlocks: stripped thinking blocks from ${totalStripped} message(s)`,
+    )
+  }
   return result
 }
 
@@ -110,78 +133,39 @@ export async function handleCompletion(c: Context) {
 
   let payload = await c.req.json<ChatCompletionsPayload>()
 
-  // Log FULL message structure for debugging
-  payload.messages.forEach((msg: any, idx: number) => {
-    const msgStr = JSON.stringify(msg)
-    if (msgStr.length > 500) {
-      consola.info(
-        "msg["
-          + idx
-          + "] role="
-          + msg.role
-          + " (truncated): "
-          + msgStr.slice(0, 500)
-          + "...",
-      )
-    } else {
-      consola.info("msg[" + idx + "] role=" + msg.role + ": " + msgStr)
-    }
-  })
-
-  // Search entire payload for thinking/signature keywords
-  const fullPayload = JSON.stringify(payload)
-  const thinkingIdx = fullPayload.indexOf('"thinking"')
-  const signatureIdx = fullPayload.indexOf('"signature"')
-  const reasoningIdx = fullPayload.indexOf('"reasoning_text"')
-  consola.info(
-    "Payload scan - thinking at:"
-      + thinkingIdx
-      + " signature at:"
-      + signatureIdx
-      + " reasoning_text at:"
-      + reasoningIdx,
-  )
-  if (signatureIdx > 0) {
-    consola.info(
-      "Signature context: ..."
-        + fullPayload.slice(Math.max(0, signatureIdx - 100), signatureIdx + 100)
-        + "...",
-    )
-  }
-  if (thinkingIdx > 0) {
-    consola.info(
-      "Thinking context: ..."
-        + fullPayload.slice(Math.max(0, thinkingIdx - 100), thinkingIdx + 100)
-        + "...",
-    )
-  }
-
-  // Also strip reasoning_text from assistant messages (causes thinking block validation)
-  payload.messages = payload.messages.map((msg: any) => {
-    if (msg.reasoning_text !== undefined) {
-      consola.info("Removing reasoning_text from " + msg.role + " message")
-      const { reasoning_text, ...rest } = msg
-      return rest
+  // Strip reasoning_text from assistant messages (some clients echo it back
+  // and upstream rejects it as an unknown field on assistant turns).
+  payload.messages = payload.messages.map((msg) => {
+    const m = msg as ChatMessage
+    if (m.reasoning_text !== undefined) {
+      const { reasoning_text: _ignored, ...rest } = m
+      return rest as typeof msg
     }
     return msg
   })
 
-  // Strip thinking blocks
-  if (payload.messages) {
-    payload = { ...payload, messages: stripThinkingBlocks(payload.messages) }
+  // Strip thinking blocks (Anthropic-style content) — upstream chat/completions
+  // does not understand them and will fail validation.
+  payload = {
+    ...payload,
+    messages: stripThinkingBlocks(
+      payload.messages as Array<ChatMessage>,
+    ) as typeof payload.messages,
   }
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
 
-  try {
-    if (selectedModel) {
+  // Local token estimation is purely diagnostic and CPU-heavy (full BPE
+  // encoding). Skip unless the consola log level is at debug or below.
+  if (selectedModel && consola.level >= 4) {
+    try {
       const tokenCount = await getTokenCount(payload, selectedModel)
-      consola.info("Current token count:", tokenCount)
+      consola.debug("Estimated token count:", tokenCount)
+    } catch (error) {
+      consola.warn("Failed to calculate token count:", error)
     }
-  } catch (error) {
-    consola.warn("Failed to calculate token count:", error)
   }
 
   if (state.manualApprove) await awaitApproval()
@@ -286,8 +270,14 @@ async function pipeOpenAIStream(
       if (chunk.data === undefined) continue
       if (chunk.data && chunk.data !== "[DONE]") {
         try {
-          const parsed = JSON.parse(chunk.data)
-          if (parsed?.usage) {
+          const parsed = JSON.parse(chunk.data) as {
+            usage?: {
+              prompt_tokens?: number
+              completion_tokens?: number
+              total_tokens?: number
+            }
+          }
+          if (parsed.usage) {
             usage.prompt = parsed.usage.prompt_tokens ?? usage.prompt
             usage.completion =
               parsed.usage.completion_tokens ?? usage.completion
@@ -327,7 +317,7 @@ async function pipeOpenAIStream(
       completionTokens: usage.completion || null,
       totalTokens: usage.total || null,
     })
-    await flushUsage(c)
+    flushUsage(c)
   }
 }
 
