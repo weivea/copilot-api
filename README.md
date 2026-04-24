@@ -250,7 +250,7 @@ curl http://localhost:4141/v1/messages \
   Token: see the "Super admin token" line above, or rerun with --show-token
 ```
 
-打开 `http://localhost:4141/`，把超管 token 粘贴到登录表单提交即可。出于安全考虑，token 不再通过 URL 查询参数传递（避免泄露到浏览器历史、shell 历史与 HTTP Referer header）。登录成功后 session 写入 HttpOnly Cookie，后续 reload 不需要再次输入。
+打开 `http://localhost:4141/`，把超管 token 粘贴到登录表单提交即可。出于安全考虑，token 不再通过 URL 查询参数传递（避免泄露到浏览器历史、shell 历史与 HTTP 请求来源头部）。登录成功后 session 写入 HttpOnly Cookie，后续 reload 不需要再次输入。
 
 ## 数据库
 
