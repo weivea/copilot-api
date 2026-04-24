@@ -5,7 +5,9 @@ import {
   deleteAuthToken,
   findAuthTokenByHash,
   getAuthTokenById,
+  incrementLifetimeUsed,
   listAuthTokens,
+  rotateAuthTokenSecret,
   setLifetimeUsed,
   touchLastUsed,
   updateAuthToken,
@@ -76,6 +78,30 @@ describe("auth-tokens queries", () => {
     })
     await deleteAuthToken(id)
     expect(await getAuthTokenById(id)).toBeUndefined()
+  })
+
+  test("rotateAuthTokenSecret replaces hash and prefix only", async () => {
+    const id = await createAuthToken({
+      name: "rot",
+      tokenHash: "old-hash",
+      tokenPrefix: "old-pre",
+      rpmLimit: 7,
+      monthlyTokenLimit: 100,
+      lifetimeTokenLimit: 1000,
+    })
+    await incrementLifetimeUsed(id, 42)
+
+    await rotateAuthTokenSecret(id, "new-hash", "new-pre")
+
+    const row = await getAuthTokenById(id)
+    if (!row) throw new Error("row missing")
+    expect(row.tokenHash).toBe("new-hash")
+    expect(row.tokenPrefix).toBe("new-pre")
+    expect(row.name).toBe("rot")
+    expect(row.rpmLimit).toBe(7)
+    expect(row.monthlyTokenLimit).toBe(100)
+    expect(row.lifetimeTokenLimit).toBe(1000)
+    expect(row.lifetimeTokenUsed).toBe(42)
   })
 
   test("setLifetimeUsed and touchLastUsed", async () => {

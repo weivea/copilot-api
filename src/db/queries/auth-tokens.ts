@@ -149,3 +149,15 @@ export async function touchLastUsed(
     .set({ lastUsedAt: timestamp })
     .where(eq(authTokens.id, id))
 }
+
+export async function rotateAuthTokenSecret(
+  id: number,
+  newHash: string,
+  newPrefix: string,
+): Promise<void> {
+  const db = getDb()
+  await db
+    .update(authTokens)
+    .set({ tokenHash: newHash, tokenPrefix: newPrefix })
+    .where(eq(authTokens.id, id))
+}
