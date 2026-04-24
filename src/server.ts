@@ -3,6 +3,7 @@ import { cors } from "hono/cors"
 import path from "node:path"
 
 import { authMiddleware } from "./lib/auth-middleware"
+import { requireCopilotReady } from "./lib/copilot-availability"
 import { redactingLogger } from "./lib/redacting-logger"
 import { staticSpa } from "./lib/static-spa"
 import { usageRecorder } from "./lib/usage-recorder"
@@ -24,6 +25,12 @@ server.route("/admin/api", adminRoutes)
 
 server.use(authMiddleware())
 server.use(usageRecorder())
+
+server.use("/chat/completions/*", requireCopilotReady())
+server.use("/models/*", requireCopilotReady())
+server.use("/embeddings/*", requireCopilotReady())
+server.use("/token", requireCopilotReady())
+server.use("/v1/*", requireCopilotReady())
 
 server.route("/chat/completions", completionRoutes)
 server.route("/models", modelRoutes)
