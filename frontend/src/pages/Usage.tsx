@@ -25,7 +25,6 @@ export function Usage() {
   const [tokens, setTokens] = useState<Array<TokenRow>>([])
   const [selection, setSelection] = useState<Selection>("me")
   const [range, setRange] = useState<Range>(rangeFromPreset({ days: 7 }))
-  const [metric, setMetric] = useState<"requests" | "tokens">("requests")
   const [series, setSeries] = useState<Array<TimeseriesPoint>>([])
   const [perToken, setPerToken] = useState<Array<PerTokenRow>>([])
   const [recent, setRecent] = useState<Array<RecentLog>>([])
@@ -101,22 +100,34 @@ export function Usage() {
           </select>
         )}
         <TimeRangePicker value={range} onChange={setRange} />
-        <select
-          value={metric}
-          onChange={(e) => setMetric(e.target.value as "requests" | "tokens")}
-        >
-          <option value="requests">Requests</option>
-          <option value="tokens">Tokens</option>
-        </select>
       </div>
       {error && <div className="error">{error}</div>}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <TrendChart
-          data={series}
-          metric={metric}
-          stacked={selection === "all"}
-          tokenNames={tokenNames}
-        />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
+          gap: 16,
+          marginBottom: 16,
+        }}
+      >
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Requests</h3>
+          <TrendChart
+            data={series}
+            metric="requests"
+            stacked={selection === "all"}
+            tokenNames={tokenNames}
+          />
+        </div>
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Tokens</h3>
+          <TrendChart
+            data={series}
+            metric="tokens"
+            stacked={selection === "all"}
+            tokenNames={tokenNames}
+          />
+        </div>
       </div>
       {selection === "all" && perToken.length > 0 && (
         <div style={{ marginBottom: 16 }}>
