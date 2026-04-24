@@ -229,3 +229,94 @@ describe("admin tokens API", () => {
     expect(rows.find((r) => r.name === "admin1")).toBeDefined()
   })
 })
+
+describe("admin tokens API rotate", () => {
+  test("admin rotates own user token", async () => {
+    const { cookie } = await loginAsAdmin()
+    const create = await makeApp().request("/admin/api/tokens", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "victim" }),
+    })
+    expect(create.status).toBe(200)
+    const created = (await create.json()) as { id: number; token: string }
+
+    const sid = await createSession({
+      authTokenId: created.id,
+      isSuperAdmin: false,
+      ttlMs: 60_000,
+    })
+
+    const res = await makeApp().request(
+      `/admin/api/tokens/${created.id}/rotate`,
+      { method: "POST", headers: { cookie } },
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { token: string; token_prefix: string }
+    expect(body.token).toBeTruthy()
+    expect(body.token).not.toBe(created.token)
+    expect(body.token_prefix).toBeTruthy()
+
+    const row = await getAuthTokenById(created.id)
+    if (!row) throw new Error("row missing")
+    expect(row.tokenHash).toBe(hashToken(body.token))
+    expect(row.tokenHash).not.toBe(hashToken(created.token))
+
+    const { getSessionById } = await import("../src/db/queries/sessions")
+    expect(await getSessionById(sid)).toBeUndefined()
+  })
+
+  test("user cannot rotate", async () => {
+    const { cookie } = await loginAsUser()
+    const id = await createAuthToken({
+      name: "t",
+      tokenHash: "h",
+      tokenPrefix: "p",
+    })
+    const res = await makeApp().request(`/admin/api/tokens/${id}/rotate`, {
+      method: "POST",
+      headers: { cookie },
+    })
+    expect(res.status).toBe(403)
+  })
+
+  test("admin cannot rotate another admin token", async () => {
+    const { cookie } = await loginAsAdmin()
+    const otherAdmin = await createAuthToken({
+      name: "other-admin",
+      tokenHash: "oh",
+      tokenPrefix: "p",
+      isAdmin: true,
+    })
+    const res = await makeApp().request(
+      `/admin/api/tokens/${otherAdmin}/rotate`,
+      { method: "POST", headers: { cookie } },
+    )
+    expect(res.status).toBe(403)
+  })
+
+  test("rotate returns 404 for unknown id", async () => {
+    const cookie = await loginAsSuper()
+    const res = await makeApp().request("/admin/api/tokens/9999/rotate", {
+      method: "POST",
+      headers: { cookie },
+    })
+    expect(res.status).toBe(404)
+  })
+
+  test("rotate refuses super admin row", async () => {
+    const cookie = await loginAsSuper()
+    const id = await createAuthToken({
+      name: "__super_admin__",
+      tokenHash: "sah",
+      tokenPrefix: "p",
+      isAdmin: true,
+    })
+    state.superAdminTokenId = id
+    const res = await makeApp().request(`/admin/api/tokens/${id}/rotate`, {
+      method: "POST",
+      headers: { cookie },
+    })
+    expect(res.status).toBe(403)
+  })
+})

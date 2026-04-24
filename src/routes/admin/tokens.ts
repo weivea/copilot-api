@@ -8,6 +8,7 @@ import {
   deleteAuthToken,
   getAuthTokenById,
   listAuthTokens,
+  rotateAuthTokenSecret,
   setLifetimeUsed,
   updateAuthToken,
 } from "~/db/queries/auth-tokens"
@@ -261,4 +262,30 @@ adminTokensRoutes.post("/:id/reset-lifetime", async (c) => {
   await setLifetimeUsed(id, 0)
   await appendUsageReset(id, "lifetime", Date.now())
   return c.json({ ok: true })
+})
+
+adminTokensRoutes.post("/:id/rotate", async (c) => {
+  const role = c.get("sessionRole")
+  const id = Number.parseInt(c.req.param("id"), 10)
+  const r = await loadTargetOr404(c, id)
+  if (!r.ok) return r.resp
+  const row = r.row
+  if (isSuperAdminRow(row)) return superAdminProtected(c)
+  if (role !== "super" && row.isAdmin === 1) {
+    return c.json(
+      {
+        error: {
+          type: "permission_denied",
+          message: "Cannot rotate another admin",
+        },
+      },
+      403,
+    )
+  }
+  const plaintext = generateToken()
+  const newHash = hashToken(plaintext)
+  const newPrefix = prefixOf(plaintext)
+  await rotateAuthTokenSecret(id, newHash, newPrefix)
+  await deleteSessionsForToken(id)
+  return c.json({ token: plaintext, token_prefix: newPrefix })
 })
