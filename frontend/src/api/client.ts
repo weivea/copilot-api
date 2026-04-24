@@ -4,6 +4,7 @@ import type {
   DeviceFlowState,
   GithubAuthStatus,
   MeResponse,
+  ModelsListResponse,
   PerTokenRow,
   RecentLog,
   TimeseriesPoint,
@@ -97,4 +98,6 @@ export const api = {
     }),
   githubLogout: () =>
     request<{ ok: true }>("/github/logout", { method: "POST" }),
+
+  listModels: () => request<ModelsListResponse>("/models"),
 }

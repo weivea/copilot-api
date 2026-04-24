@@ -78,3 +78,14 @@ tr:last-child td { border-bottom: 0; }
   .docs-layout { grid-template-columns: 1fr; }
   .docs-toc { position: static; }
 }
+
+/* Models page */
+.models-page table { table-layout: auto; }
+.models-id { display: flex; align-items: center; gap: 6px; }
+.models-id-copy { position: static; padding: 2px 8px; font-size: 11px; opacity: 0; transition: opacity 0.1s; }
+.models-id:hover .models-id-copy { opacity: 1; }
+.models-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.models-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.04em; }
+.models-badge--ok { color: var(--ok); border-color: var(--ok); }
+.models-badge--warn { color: #f0a020; border-color: #f0a020; }
+.models-badge--muted { color: var(--muted); }

@@ -5,6 +5,7 @@ import { useAuth } from "./contexts/AuthContext"
 import { Docs } from "./pages/Docs"
 import { GithubAuth } from "./pages/GithubAuth"
 import { Login } from "./pages/Login"
+import { Models } from "./pages/Models"
 import { Overview } from "./pages/Overview"
 import { Settings } from "./pages/Settings"
 import { Tokens } from "./pages/Tokens"
@@ -29,6 +30,7 @@ export function App() {
         />
         <Route path="/usage" element={<Usage />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/models" element={<Models />} />
         <Route path="/docs" element={<Docs />} />
         <Route
           path="/github-auth"

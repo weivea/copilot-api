@@ -322,8 +322,8 @@ print(resp.choices[0].message.content)`
           <section id="claude-code">
             <h2>Claude Code Setup</h2>
             <p>
-              Two ways to configure Claude Code: shell environment variables,
-              or a persistent <code>~/.claude/settings.json</code>.
+              Two ways to configure Claude Code: shell environment variables, or
+              a persistent <code>~/.claude/settings.json</code>.
             </p>
 
             <h3>Option A — Shell environment</h3>

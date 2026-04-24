@@ -94,3 +94,36 @@ export interface DeviceFlowState {
   login: string | null
   expiresAt: number
 }
+
+export interface ModelInfo {
+  id: string
+  name: string
+  vendor: string
+  version: string
+  preview: boolean
+  model_picker_enabled: boolean
+  object: string
+  capabilities: {
+    family: string
+    object: string
+    tokenizer: string
+    type: string
+    limits: {
+      max_context_window_tokens?: number
+      max_output_tokens?: number
+      max_prompt_tokens?: number
+      max_inputs?: number
+    }
+    supports: {
+      tool_calls?: boolean
+      parallel_tool_calls?: boolean
+      dimensions?: boolean
+    }
+  }
+  policy?: { state: string; terms: string }
+}
+
+export interface ModelsListResponse {
+  available: boolean
+  data: Array<ModelInfo>
+}
