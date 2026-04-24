@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 
+import type { TokenRow } from "../types"
+
 import { api } from "../api/client"
 import { ConfirmDialog } from "../components/ConfirmDialog"
 import {
@@ -7,7 +9,6 @@ import {
   type TokenFormValues,
 } from "../components/TokenFormDialog"
 import { useAuth } from "../contexts/AuthContext"
-import type { CreatedToken, TokenRow } from "../types"
 
 function fmtDate(ms: number | null): string {
   if (!ms) return "—"
@@ -26,7 +27,11 @@ export function Tokens() {
     onConfirm: () => void
     destructive?: boolean
   } | null>(null)
-  const [createdReveal, setCreatedReveal] = useState<CreatedToken | null>(null)
+  type RevealState =
+    | { kind: "created"; token: string; prefix: string; name: string }
+    | { kind: "rotated"; token: string; prefix: string; name: string }
+
+  const [reveal, setReveal] = useState<RevealState | null>(null)
 
   async function load() {
     try {
@@ -52,7 +57,12 @@ export function Tokens() {
         lifetime_token_limit: values.lifetime_token_limit,
       })
       setCreating(false)
-      setCreatedReveal(created)
+      setReveal({
+        kind: "created",
+        token: created.token,
+        prefix: created.token_prefix,
+        name: created.name,
+      })
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -70,6 +80,21 @@ export function Tokens() {
         ...(isSuper ? { is_admin: values.is_admin } : {}),
       } as Partial<TokenRow>)
       setEditing(undefined)
+      await load()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  async function onRotate(r: TokenRow) {
+    try {
+      const result = await api.rotateToken(r.id)
+      setReveal({
+        kind: "rotated",
+        token: result.token,
+        prefix: result.token_prefix,
+        name: r.name,
+      })
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -143,12 +168,18 @@ export function Tokens() {
                       system
                     </span>
                   )}
-                  {r.is_disabled && (
-                    <span className="error"> (disabled)</span>
-                  )}
+                  {r.is_disabled && <span className="error"> (disabled)</span>}
                 </td>
-                <td><code>{r.token_prefix}</code></td>
-                <td>{isSuperRow ? "super" : r.is_admin ? "admin" : "user"}</td>
+                <td>
+                  <code>{r.token_prefix}</code>
+                </td>
+                <td>
+                  {isSuperRow ?
+                    "super"
+                  : r.is_admin ?
+                    "admin"
+                  : "user"}
+                </td>
                 <td>{r.rpm_limit ?? "—"}</td>
                 <td>{r.monthly_token_limit ?? "—"}</td>
                 <td>
@@ -159,6 +190,20 @@ export function Tokens() {
                 <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {canEdit && (
                     <button onClick={() => setEditing(r)}>Edit</button>
+                  )}
+                  {canEdit && (
+                    <button
+                      onClick={() =>
+                        ask(
+                          "Rotate token?",
+                          `Generate a new token for "${r.name}"? The current token will be revoked immediately and any active dashboard sessions for it will be terminated.`,
+                          () => onRotate(r),
+                          true,
+                        )
+                      }
+                    >
+                      Rotate
+                    </button>
                   )}
                   {canEdit && (
                     <button
@@ -251,15 +296,27 @@ export function Tokens() {
         />
       )}
 
-      {createdReveal && (
-        <div
-          className="dialog-backdrop"
-          onClick={() => setCreatedReveal(null)}
-        >
+      {reveal && (
+        <div className="dialog-backdrop" onClick={() => setReveal(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0 }}>Token created</h3>
+            <h3 style={{ marginTop: 0 }}>
+              {reveal.kind === "created" ? "Token created" : "Token rotated"}
+            </h3>
             <p>
-              Copy the token now. <strong>It will never be shown again.</strong>
+              {reveal.kind === "created" ?
+                <>
+                  Copy the token now.{" "}
+                  <strong>It will never be shown again.</strong>
+                </>
+              : <>
+                  This is the new token for &quot;{reveal.name}&quot;. Copy it
+                  now. It will never be shown again. The previous token has been
+                  revoked.
+                </>
+              }
+            </p>
+            <p style={{ marginTop: 0, color: "var(--muted)", fontSize: 13 }}>
+              Prefix: <code>{reveal.prefix}</code>
             </p>
             <pre
               style={{
@@ -270,22 +327,17 @@ export function Tokens() {
                 whiteSpace: "pre-wrap",
               }}
             >
-              {createdReveal.token}
+              {reveal.token}
             </pre>
             <div
               style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}
             >
               <button
-                onClick={() =>
-                  void navigator.clipboard.writeText(createdReveal.token)
-                }
+                onClick={() => void navigator.clipboard.writeText(reveal.token)}
               >
                 Copy
               </button>
-              <button
-                className="primary"
-                onClick={() => setCreatedReveal(null)}
-              >
+              <button className="primary" onClick={() => setReveal(null)}>
                 I&apos;ve saved it
               </button>
             </div>
