@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { api } from "../api/client"
@@ -12,26 +12,6 @@ export function Login() {
   const [keyInput, setKeyInput] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    const url = new URL(globalThis.location.href)
-    const key = url.searchParams.get("key")
-    if (!key) return
-    const ttl = Number.parseInt(
-      globalThis.localStorage.getItem(TTL_KEY) ?? "1",
-      10,
-    )
-    setBusy(true)
-    api
-      .login(key, [1, 30, 7].includes(ttl) ? ttl : 1)
-      .then(async () => {
-        globalThis.history.replaceState(null, "", "/")
-        await refresh()
-        nav("/overview", { replace: true })
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false))
-  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
