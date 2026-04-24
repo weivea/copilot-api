@@ -39,16 +39,19 @@ function startOfCurrentMonthMs(): number {
   return d.getTime()
 }
 
+const PROTECTED_EXACT = new Set(["/token"])
 const PROTECTED_PREFIXES = [
   "/chat/completions",
   "/models",
   "/embeddings",
-  "/token",
   "/v1/",
 ]
 
 function isProtectedPath(path: string): boolean {
-  return PROTECTED_PREFIXES.some((p) => path === p || path.startsWith(p))
+  if (PROTECTED_EXACT.has(path)) return true
+  return PROTECTED_PREFIXES.some(
+    (p) => path === p || path.startsWith(p.endsWith("/") ? p : `${p}/`),
+  )
 }
 
 export function authMiddleware(): MiddlewareHandler {

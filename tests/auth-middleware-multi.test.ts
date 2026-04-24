@@ -24,6 +24,9 @@ function makeApp(): Hono {
   app.post("/v1/messages", (c) =>
     c.json({ tokenId: c.get("authTokenId") ?? null }),
   )
+  app.get("/tokens", (c) => c.text("spa-fallthrough"))
+  app.get("/token", (c) => c.json({ ok: true }))
+  app.get("/modelsearch", (c) => c.text("spa-fallthrough"))
   return app
 }
 
@@ -154,5 +157,22 @@ describe("authMiddleware (multi)", () => {
     state.authEnabled = false
     const res = await makeApp().request("/v1/messages", { method: "POST" })
     expect(res.status).toBe(200)
+  })
+
+  test("/tokens (SPA path) is NOT protected — falls through to next handler", async () => {
+    const res = await makeApp().request("/tokens")
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("spa-fallthrough")
+  })
+
+  test("/token (real API) IS still protected", async () => {
+    const res = await makeApp().request("/token")
+    expect(res.status).toBe(401)
+  })
+
+  test("/modelsearch (SPA-like path) is NOT protected by /models prefix", async () => {
+    const res = await makeApp().request("/modelsearch")
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("spa-fallthrough")
   })
 })
