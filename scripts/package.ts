@@ -1,17 +1,25 @@
 #!/usr/bin/env bun
 /**
- * Build a self-contained Linux x64 release tarball.
+ * Build a self-contained release tarball for a given Bun --compile target.
  *
- * Output: dist/copilot-api-v<version>-linux-x64.tar.gz
+ * Usage:
+ *   bun run scripts/package.ts                       # defaults to bun-linux-x64
+ *   bun run scripts/package.ts --target=bun-linux-arm64
+ *   bun run scripts/package.ts --target=bun-darwin-arm64
+ *
+ * Target may also be supplied via the BUN_TARGET env var.
+ *
+ * Output: dist/copilot-api-v<version>-<platform>.tar.gz
+ *   where <platform> is derived from the target (e.g. bun-linux-x64 → linux-x64).
  *
  * Layout inside the tarball:
  *   release/
- *     bin/copilot-api        (Bun --compile single-file binary)
- *     dist/public/           (frontend static assets)
- *     scripts/               (start.sh / stop.sh / restart.sh)
+ *     bin/copilot-api[.exe]   (Bun --compile single-file binary)
+ *     dist/public/            (frontend static assets)
+ *     scripts/                (start.sh / stop.sh / restart.sh)
  *
  * On the target machine:
- *   tar -xzf copilot-api-v<version>-linux-x64.tar.gz
+ *   tar -xzf copilot-api-v<version>-<platform>.tar.gz
  *   cd release && ./scripts/start.sh
  */
 
@@ -22,7 +30,24 @@ import path from "node:path"
 const ROOT = path.resolve(import.meta.dir, "..")
 const DIST = path.join(ROOT, "dist")
 const RELEASE = path.join(DIST, "release")
-const TARGET = "bun-linux-x64"
+
+const DEFAULT_TARGET = "bun-linux-x64"
+
+function parseTarget(): string {
+  for (const arg of Bun.argv.slice(2)) {
+    if (arg.startsWith("--target=")) return arg.slice("--target=".length)
+  }
+  return process.env.BUN_TARGET || DEFAULT_TARGET
+}
+
+function platformSuffix(target: string): string {
+  // bun-linux-x64 → linux-x64, bun-darwin-arm64 → darwin-arm64, etc.
+  return target.startsWith("bun-") ? target.slice("bun-".length) : target
+}
+
+function binFileName(target: string): string {
+  return target.includes("windows") ? "copilot-api.exe" : "copilot-api"
+}
 
 async function readVersion(): Promise<string> {
   const pkg = JSON.parse(
@@ -32,8 +57,10 @@ async function readVersion(): Promise<string> {
 }
 
 async function main() {
+  const target = parseTarget()
+  const platform = platformSuffix(target)
   const version = await readVersion()
-  const tarName = `copilot-api-v${version}-linux-x64.tar.gz`
+  const tarName = `copilot-api-v${version}-${platform}.tar.gz`
   const tarPath = path.join(DIST, tarName)
 
   console.log(`[package] cleaning ${RELEASE}`)
@@ -51,9 +78,9 @@ async function main() {
     throw new Error(`frontend build did not produce ${publicSrc}`)
   }
 
-  console.log(`[package] compiling binary (${TARGET})`)
-  const binOut = path.join(RELEASE, "bin", "copilot-api")
-  await $`bun build ./src/main.ts --compile --target=${TARGET} --minify --outfile ${binOut}`.cwd(
+  console.log(`[package] compiling binary (${target})`)
+  const binOut = path.join(RELEASE, "bin", binFileName(target))
+  await $`bun build ./src/main.ts --compile --target=${target} --minify --outfile ${binOut}`.cwd(
     ROOT,
   )
 
