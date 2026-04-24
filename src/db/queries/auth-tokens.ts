@@ -63,6 +63,18 @@ export async function findAuthTokenByHash(
   return rows[0] as AuthTokenRow | undefined
 }
 
+export async function findAuthTokenByName(
+  name: string,
+): Promise<AuthTokenRow | undefined> {
+  const db = getDb()
+  const rows = await db
+    .select()
+    .from(authTokens)
+    .where(eq(authTokens.name, name))
+    .limit(1)
+  return rows[0] as AuthTokenRow | undefined
+}
+
 export async function getAuthTokenById(
   id: number,
 ): Promise<AuthTokenRow | undefined> {
