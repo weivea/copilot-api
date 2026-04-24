@@ -12,10 +12,85 @@ interface Section {
 
 const SECTIONS: Array<Section> = [
   { id: "quick-start", title: "Quick Start" },
+  { id: "endpoints", title: "API Endpoints" },
   { id: "openai", title: "OpenAI-compatible Endpoints" },
   { id: "anthropic", title: "Anthropic-compatible Endpoints" },
   { id: "claude-code", title: "Claude Code Setup" },
   { id: "notes", title: "Notes & Limits" },
+]
+
+interface EndpointRow {
+  method: string
+  path: string
+  family: string
+  auth: string
+  purpose: string
+}
+
+const ENDPOINTS: Array<EndpointRow> = [
+  {
+    method: "GET",
+    path: "/healthz",
+    family: "internal",
+    auth: "none",
+    purpose: "Liveness probe — returns 'ok'.",
+  },
+  {
+    method: "POST",
+    path: "/chat/completions",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Chat completions (streaming + non-streaming).",
+  },
+  {
+    method: "POST",
+    path: "/v1/chat/completions",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Same as above — /v1 alias for SDKs that require it.",
+  },
+  {
+    method: "GET",
+    path: "/models",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "List Copilot models exposed to your account.",
+  },
+  {
+    method: "GET",
+    path: "/v1/models",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Same as above — /v1 alias.",
+  },
+  {
+    method: "POST",
+    path: "/embeddings",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Text embeddings.",
+  },
+  {
+    method: "POST",
+    path: "/v1/embeddings",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Same as above — /v1 alias.",
+  },
+  {
+    method: "POST",
+    path: "/v1/messages",
+    family: "Anthropic",
+    auth: "Bearer or x-api-key",
+    purpose: "Anthropic Messages API, translated to Copilot.",
+  },
+  {
+    method: "GET",
+    path: "/token",
+    family: "internal",
+    auth: "Bearer",
+    purpose: "Returns the proxy's current upstream Copilot token.",
+  },
 ]
 
 function CopyButton({ text }: { text: string }) {
@@ -271,6 +346,53 @@ print(resp.choices[0].message.content)`
                 <code>{baseUrl}</code> using your token.
               </li>
             </ol>
+          </section>
+
+          <section id="endpoints">
+            <h2>API Endpoints</h2>
+            <p>
+              Every LLM-related route this server exposes. All routes except{" "}
+              <code>/healthz</code> require an API token — pass it as{" "}
+              <code>authorization: Bearer &lt;token&gt;</code> (or{" "}
+              <code>x-api-key</code> for the Anthropic endpoint). When GitHub
+              Copilot is not connected on the server, every LLM route returns{" "}
+              <code>503 copilot_unavailable</code>.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Method</th>
+                  <th>Path</th>
+                  <th>Family</th>
+                  <th>Auth</th>
+                  <th>Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ENDPOINTS.map((e) => (
+                  <tr key={`${e.method} ${e.path}`}>
+                    <td>
+                      <code>{e.method}</code>
+                    </td>
+                    <td>
+                      <code>{e.path}</code>
+                    </td>
+                    <td>{e.family}</td>
+                    <td>{e.auth}</td>
+                    <td>{e.purpose}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted small">
+              Each model in <code>/v1/models</code> carries a{" "}
+              <code>supported_endpoints</code> array indicating which of these
+              routes it accepts (for example, embedding models only accept{" "}
+              <code>/embeddings</code>; chat models accept{" "}
+              <code>/chat/completions</code> and most also accept{" "}
+              <code>/v1/messages</code>). See the{" "}
+              <a href="/copilot-models">Models</a> page for the live list.
+            </p>
           </section>
 
           <section id="openai">
