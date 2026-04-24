@@ -30,6 +30,7 @@ interface RunServerOptions {
   proxyEnv: boolean
   tlsCert?: string
   tlsKey?: string
+  httpRedirectPort?: number
   dbPath?: string
   logRetentionDays: number
   dashboard: boolean
@@ -172,6 +173,31 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     port: options.port,
     ...(tls && { tls }),
   })
+
+  if (tls && options.httpRedirectPort !== undefined) {
+    const httpsPort = options.port
+    const redirectPort = options.httpRedirectPort
+    serve({
+      port: redirectPort,
+      fetch: (req: Request) => {
+        const url = new URL(req.url)
+        url.protocol = "https:"
+        // Strip the redirect listener port; preserve the configured HTTPS port
+        // (omit when it's the default 443 so the URL stays clean).
+        url.port = httpsPort === 443 ? "" : String(httpsPort)
+        // If a domain was configured, force the canonical hostname so direct
+        // IP hits also land on the cert's CN.
+        if (config.domain) url.hostname = config.domain
+        return new Response(null, {
+          status: 301,
+          headers: { Location: url.toString() },
+        })
+      },
+    })
+    consola.info(
+      `HTTP→HTTPS redirect listening on :${redirectPort} → :${httpsPort}`,
+    )
+  }
 }
 
 export const start = defineCommand({
@@ -246,6 +272,11 @@ export const start = defineCommand({
       type: "string",
       description: "Path to TLS private key file (PEM format)",
     },
+    "http-redirect-port": {
+      type: "string",
+      description:
+        "When TLS is enabled, also listen on this port and 301-redirect to HTTPS (e.g. 80). Disabled by default.",
+    },
     "db-path": {
       type: "string",
       description:
@@ -281,6 +312,11 @@ export const start = defineCommand({
       proxyEnv: args["proxy-env"],
       tlsCert: args["tls-cert"],
       tlsKey: args["tls-key"],
+      httpRedirectPort:
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        args["http-redirect-port"] === undefined
+          ? undefined
+          : Number.parseInt(args["http-redirect-port"], 10),
       dbPath: args["db-path"],
       logRetentionDays: Number.parseInt(args["log-retention-days"], 10) || 90,
       dashboard: args.dashboard,

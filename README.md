@@ -187,6 +187,7 @@ bun run start      # 生产模式启动
 | `--proxy-env` | 从环境变量初始化 HTTP/HTTPS 代理 | `false` | — |
 | `--tls-cert` | TLS 证书路径（PEM） | — | — |
 | `--tls-key` | TLS 私钥路径（PEM） | — | — |
+| `--http-redirect-port` | 启用 TLS 时,额外监听的 HTTP 端口,所有请求 301 跳到 HTTPS（典型值 `80`,需 root） | — | — |
 | `--db-path` | SQLite 数据库文件路径 | `~/.local/share/copilot-api/copilot-api.db` | — |
 | `--log-retention-days` | `request_logs` 保留天数 | `90` | — |
 | `--no-dashboard` | 禁用 Dashboard 与 `/admin/api` 路由 | `false`（默认启用） | — |
@@ -483,6 +484,17 @@ bun run start --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
 ```
 
 启用 TLS 后，启动日志会显示证书路径，所有 URL 自动改为 `https://`。
+
+### HTTP → HTTPS 自动跳转
+
+启用 TLS 时可加 `--http-redirect-port <port>`,服务会**额外**在该端口监听一个轻量 HTTP server，所有请求统一回 `301 Location: https://...`(保留路径与 query)。
+
+```sh
+# 监听 443 提供 HTTPS,同时在 80 端口接住 http://… 请求并 301 到 https://…
+sudo ./bin/copilot-api start --port 443 --http-redirect-port 80
+```
+
+如果配置了 `domain`(via `copilot-api.config.json` 或 `cert.sh obtain` 自动写入)，重定向 URL 会强制使用该 domain，避免裸 IP 命中时跳到没有证书 CN 的地址。绑定 `:80` / `:443` 通常需要 root 或 setcap;不传该 flag 时不会启动 HTTP listener。
 
 ## 源码运行
 
