@@ -142,3 +142,26 @@ export interface ModelsListResponse {
   available: boolean
   data: Array<ModelInfo>
 }
+
+export type CertificateInfo =
+  | {
+      configured: false
+      reason: "not_configured"
+      hint: string
+    }
+  | {
+      configured: true
+      error: string
+      certPath: string
+    }
+  | {
+      configured: true
+      domain: string | null
+      subject: string
+      issuer: string
+      validFrom: string
+      validTo: string
+      daysRemaining: number
+      expired: boolean
+      certPath: string
+    }

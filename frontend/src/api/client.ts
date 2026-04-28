@@ -1,4 +1,5 @@
 import type {
+  CertificateInfo,
   CreatedToken,
   DeviceFlowStart,
   DeviceFlowState,
@@ -100,4 +101,5 @@ export const api = {
     request<{ ok: true }>("/github/logout", { method: "POST" }),
 
   listModels: () => request<ModelsListResponse>("/models"),
+  getCertificate: () => request<CertificateInfo>("/certificate"),
 }
