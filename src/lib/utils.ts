@@ -1,5 +1,6 @@
 import consola from "consola"
 
+import { rebuildWhitelistFromModels } from "~/lib/responses-routing"
 import { getModels } from "~/services/copilot/get-models"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 
@@ -45,6 +46,7 @@ export function formatErrorWithCause(error: unknown): string {
 export async function cacheModels(): Promise<void> {
   const models = await getModels()
   state.models = models
+  rebuildWhitelistFromModels(models.data)
 }
 
 export const cacheVSCodeVersion = async () => {
