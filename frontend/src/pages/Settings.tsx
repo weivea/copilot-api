@@ -1,13 +1,23 @@
 import { useEffect, useState } from "react"
 
+import type { MeResponse } from "../types"
+
+import { api } from "../api/client"
+import { TlsCertificateCard } from "../components/TlsCertificateCard"
+
 const TTL_KEY = "cpk_preferred_ttl"
 
 export function Settings() {
   const [ttl, setTtl] = useState<number>(1)
+  const [me, setMe] = useState<MeResponse | null>(null)
 
   useEffect(() => {
     const v = globalThis.localStorage.getItem(TTL_KEY)
     if (v) setTtl(Number.parseInt(v, 10))
+    api
+      .me()
+      .then(setMe)
+      .catch(() => setMe(null))
   }, [])
 
   function update(next: number) {
@@ -34,6 +44,8 @@ export function Settings() {
           Applied at next sign-in. Stored locally in this browser only.
         </p>
       </div>
+
+      {me?.role === "super" && <TlsCertificateCard />}
     </div>
   )
 }
