@@ -3,7 +3,17 @@ import { events } from "fetch-event-stream"
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import {
+  recordResponsesOnlyModel,
+  shouldUseResponsesEndpoint,
+} from "~/lib/responses-routing"
 import { state } from "~/lib/state"
+import {
+  chatRequestToResponses,
+  responsesStreamToChatStream,
+  responsesToChatResponse,
+} from "~/lib/translation/chat-to-responses"
+import { createResponses } from "~/services/copilot/create-responses"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
@@ -11,6 +21,32 @@ export const createChatCompletions = async (
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
+  // Route Responses-only models (whitelisted at /models fetch time, or learned
+  // via the runtime cache after a previous unsupported_api_for_model failure)
+  // straight to the /responses upstream. Translate the response back to chat
+  // shape so the caller sees no protocol difference.
+  if (shouldUseResponsesEndpoint(payload.model)) {
+    return callViaResponses(payload, options)
+  }
+
+  try {
+    return await callChatCompletions(payload, options)
+  } catch (error) {
+    if (isUnsupportedApiForModelError(error)) {
+      consola.warn(
+        `Model "${payload.model}" not available on /chat/completions; retrying via /responses.`,
+      )
+      recordResponsesOnlyModel(payload.model)
+      return callViaResponses(payload, options)
+    }
+    throw error
+  }
+}
+
+async function callChatCompletions(
+  payload: ChatCompletionsPayload,
+  options?: { signal?: AbortSignal },
+) {
   const enableVision = payload.messages.some(
     (x) =>
       typeof x.content !== "string"
@@ -46,6 +82,37 @@ export const createChatCompletions = async (
   }
 
   return (await response.json()) as ChatCompletionResponse
+}
+
+async function callViaResponses(
+  payload: ChatCompletionsPayload,
+  options?: { signal?: AbortSignal },
+) {
+  const responsesPayload = chatRequestToResponses(payload)
+  const upstream = await createResponses(responsesPayload, options)
+
+  if (payload.stream) {
+    return responsesStreamToChatStream(
+      upstream as AsyncIterable<{ event?: string; data?: string }>,
+      payload.model,
+    )
+  }
+
+  return responsesToChatResponse(
+    upstream as Awaited<ReturnType<typeof createResponses>> as any,
+  )
+}
+
+function isUnsupportedApiForModelError(error: unknown): boolean {
+  if (!(error instanceof HTTPError)) return false
+  const text = error.bodyText
+  if (!text) return false
+  try {
+    const parsed = JSON.parse(text) as { error?: { code?: string } }
+    return parsed.error?.code === "unsupported_api_for_model"
+  } catch {
+    return text.includes("unsupported_api_for_model")
+  }
 }
 
 // Streaming types
