@@ -1,3 +1,5 @@
+import consola from "consola"
+
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
@@ -216,8 +218,6 @@ export function responsesToChatResponse(
   }
 }
 
-import consola from "consola"
-
 interface UpstreamSseEvent {
   event?: string
   data?: string
@@ -225,6 +225,33 @@ interface UpstreamSseEvent {
 
 interface ChatChunkOut {
   data: string
+}
+
+interface CreatedPayload {
+  response?: { id?: string }
+}
+interface TextDeltaPayload {
+  delta?: string
+}
+interface FnArgsDeltaPayload {
+  call_id?: string
+  delta?: string
+}
+interface ItemAddedPayload {
+  item?: { type?: string; call_id?: string; name?: string }
+}
+interface CompletedPayload {
+  response?: {
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      total_tokens?: number
+    }
+  }
+}
+interface FailedPayload {
+  response?: { error?: { message?: string } }
+  error?: { message?: string }
 }
 
 // Maps Copilot /responses SSE events to OpenAI-style chat.completion.chunk SSE.
@@ -256,16 +283,17 @@ export async function* responsesStreamToChatStream(
 
   for await (const evt of upstream) {
     if (!evt.event || evt.data === undefined) continue
-    let payload: Record<string, any> = {}
+    let payload: Record<string, unknown> = {}
     try {
-      payload = JSON.parse(evt.data) as Record<string, any>
+      payload = JSON.parse(evt.data) as Record<string, unknown>
     } catch {
       continue
     }
 
     switch (evt.event) {
       case "response.created": {
-        if (payload.response?.id) id = `chatcmpl-${payload.response.id}`
+        const p = payload as CreatedPayload
+        if (p.response?.id) id = `chatcmpl-${p.response.id}`
         // Emit a leading chunk with role:"assistant" so chat clients
         // can latch onto the assistant turn before content arrives.
         emittedRole = true
@@ -274,7 +302,7 @@ export async function* responsesStreamToChatStream(
       }
 
       case "response.output_text.delta": {
-        const delta = payload.delta as string | undefined
+        const delta = (payload as TextDeltaPayload).delta
         if (typeof delta !== "string") break
         if (!emittedRole) {
           emittedRole = true
@@ -286,9 +314,7 @@ export async function* responsesStreamToChatStream(
       }
 
       case "response.output_item.added": {
-        const item = payload.item as
-          | { type?: string; call_id?: string; name?: string }
-          | undefined
+        const item = (payload as ItemAddedPayload).item
         if (item?.type === "function_call" && item.call_id) {
           sawToolCall = true
           const idx = nextIndex++
@@ -310,8 +336,9 @@ export async function* responsesStreamToChatStream(
       }
 
       case "response.function_call_arguments.delta": {
-        const delta = payload.delta as string | undefined
-        const callId = payload.call_id as string | undefined
+        const p = payload as FnArgsDeltaPayload
+        const delta = p.delta
+        const callId = p.call_id
         if (typeof delta !== "string" || !callId) break
         const idx = callIndex.get(callId) ?? 0
         sawToolCall = true
@@ -329,13 +356,7 @@ export async function* responsesStreamToChatStream(
       }
 
       case "response.completed": {
-        const usage = payload.response?.usage as
-          | {
-              input_tokens?: number
-              output_tokens?: number
-              total_tokens?: number
-            }
-          | undefined
+        const usage = (payload as CompletedPayload).response?.usage
         const finalChoices = [
           {
             index: 0,
@@ -366,9 +387,10 @@ export async function* responsesStreamToChatStream(
 
       case "response.failed":
       case "response.error": {
+        const p = payload as FailedPayload
         const message =
-          (payload.response?.error?.message as string | undefined)
-          ?? (payload.error?.message as string | undefined)
+          p.response?.error?.message
+          ?? p.error?.message
           ?? "responses upstream error"
         yield {
           data: JSON.stringify({
