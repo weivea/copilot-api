@@ -1,5 +1,6 @@
 import type { Context } from "hono"
 
+import consola from "consola"
 import { z } from "zod"
 
 import { HTTPError } from "~/lib/error"
@@ -66,7 +67,8 @@ export async function handleResponses(c: Context) {
   }
 
   const upstreamController = new AbortController()
-  c.req.raw.signal.addEventListener("abort", () => upstreamController.abort())
+  const onAbort = () => upstreamController.abort()
+  c.req.raw.signal.addEventListener("abort", onAbort, { once: true })
 
   const upstream = await createResponses(payload, {
     signal: upstreamController.signal,
@@ -82,13 +84,20 @@ export async function handleResponses(c: Context) {
             for await (const evt of upstream as AsyncIterable<{
               event?: string
               data?: string
+              id?: string
+              retry?: number
             }>) {
+              if (evt.id !== undefined)
+                controller.enqueue(encoder.encode(`id: ${evt.id}\n`))
               if (evt.event)
                 controller.enqueue(encoder.encode(`event: ${evt.event}\n`))
+              if (evt.retry !== undefined)
+                controller.enqueue(encoder.encode(`retry: ${evt.retry}\n`))
               if (evt.data !== undefined)
                 controller.enqueue(encoder.encode(`data: ${evt.data}\n\n`))
             }
           } catch (error) {
+            consola.error("Upstream /responses stream failed:", error)
             const message =
               error instanceof Error ? error.message : String(error)
             controller.enqueue(
@@ -97,6 +106,7 @@ export async function handleResponses(c: Context) {
               ),
             )
           } finally {
+            c.req.raw.signal.removeEventListener("abort", onAbort)
             controller.close()
           }
         },
@@ -111,6 +121,8 @@ export async function handleResponses(c: Context) {
       },
     )
   }
+
+  c.req.raw.signal.removeEventListener("abort", onAbort)
 
   if (upstream instanceof Response) {
     // defensive — createResponses normally returns parsed JSON or AsyncIterable
