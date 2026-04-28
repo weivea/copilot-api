@@ -300,3 +300,5 @@ export function Models() {
     </div>
   )
 }
+
+export default Models

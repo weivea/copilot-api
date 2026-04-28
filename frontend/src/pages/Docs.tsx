@@ -500,3 +500,5 @@ print(resp.choices[0].message.content)`
     </div>
   )
 }
+
+export default Docs

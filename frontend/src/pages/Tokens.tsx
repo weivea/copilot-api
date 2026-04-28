@@ -347,3 +347,5 @@ export function Tokens() {
     </div>
   )
 }
+
+export default Tokens
