@@ -1,4 +1,5 @@
 import type {
+  ChatCompletionResponse,
   ChatCompletionsPayload,
   ContentPart,
   Message,
@@ -6,8 +7,11 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type {
   ResponsesContentPart,
+  ResponsesFunctionCallOutput,
   ResponsesInputItem,
+  ResponsesMessageOutput,
   ResponsesPayload,
+  ResponsesResponse,
   ResponsesTool,
 } from "~/services/copilot/create-responses"
 
@@ -141,4 +145,76 @@ function translateToolChoice(
 ): NonNullable<ResponsesPayload["tool_choice"]> {
   if (typeof choice === "string") return choice
   return { type: "function", name: choice.function.name }
+}
+
+export function responsesToChatResponse(
+  resp: ResponsesResponse,
+): ChatCompletionResponse {
+  const messageParts: Array<string> = []
+  const toolCalls: Array<{
+    id: string
+    type: "function"
+    function: { name: string; arguments: string }
+  }> = []
+
+  for (const item of resp.output) {
+    if (item.type === "message") {
+      const m = item as ResponsesMessageOutput
+      for (const part of m.content) {
+        if (part.type === "output_text") messageParts.push(part.text)
+      }
+    } else if (item.type === "function_call") {
+      const fc = item as ResponsesFunctionCallOutput
+      toolCalls.push({
+        id: fc.call_id,
+        type: "function",
+        function: { name: fc.name, arguments: fc.arguments },
+      })
+    }
+    // reasoning items intentionally dropped from chat-shaped output for now
+  }
+
+  const finishReason: ChatCompletionResponse["choices"][number]["finish_reason"] =
+    toolCalls.length > 0
+      ? "tool_calls"
+      : resp.status === "incomplete"
+        ? "length"
+        : resp.status === "failed"
+          ? "content_filter"
+          : "stop"
+
+  const content = messageParts.length > 0 ? messageParts.join("") : null
+
+  return {
+    id: `chatcmpl-${resp.id}`,
+    object: "chat.completion",
+    created: resp.created_at,
+    model: resp.model,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content,
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        },
+        logprobs: null,
+        finish_reason: finishReason,
+      },
+    ],
+    usage: resp.usage
+      ? {
+          prompt_tokens: resp.usage.input_tokens,
+          completion_tokens: resp.usage.output_tokens,
+          total_tokens: resp.usage.total_tokens,
+          ...(resp.usage.input_tokens_details
+            ? {
+                prompt_tokens_details: {
+                  cached_tokens: resp.usage.input_tokens_details.cached_tokens ?? 0,
+                },
+              }
+            : {}),
+        }
+      : undefined,
+  }
 }
