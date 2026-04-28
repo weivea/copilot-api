@@ -5,28 +5,41 @@ import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
+function isMessageItem(
+  item: ResponsesInputItem,
+): item is ResponsesMessageItem {
+  return item.type === undefined || item.type === "message"
+}
+
 export const createResponses = async (
   payload: ResponsesPayload,
   options?: { signal?: AbortSignal },
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
-  // Vision detection: any input item carrying an input_image part.
+  // Vision detection: any message item carrying an input_image part.
   const enableVision =
     Array.isArray(payload.input)
     && payload.input.some(
       (item) =>
-        typeof item === "object"
-        && item !== null
-        && "content" in item
-        && Array.isArray((item as { content?: unknown }).content)
-        && (item as { content: Array<{ type?: string }> }).content.some(
-          (c) => c.type === "input_image",
-        ),
+        isMessageItem(item)
+        && item.content.some((c) => c.type === "input_image"),
     )
+
+  // Mirror create-chat-completions: agent call when there's prior assistant
+  // turn or function call traffic in the input.
+  const isAgentCall =
+    Array.isArray(payload.input)
+    && payload.input.some((item) => {
+      if (item.type === "function_call" || item.type === "function_call_output")
+        return true
+      if (isMessageItem(item) && item.role === "assistant") return true
+      return false
+    })
 
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
+    "X-Initiator": isAgentCall ? "agent" : "user",
   }
 
   consola.info(
