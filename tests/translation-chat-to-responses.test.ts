@@ -5,8 +5,23 @@ import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat
 import {
   chatRequestToResponses,
   responsesToChatResponse,
+  responsesStreamToChatStream,
 } from "../src/lib/translation/chat-to-responses"
 import type { ResponsesResponse } from "../src/services/copilot/create-responses"
+
+async function* fromArray<T>(items: Array<T>): AsyncGenerator<T> {
+  for (const it of items) yield it
+}
+
+async function collect(
+  it: AsyncIterable<{ data?: string }>,
+): Promise<Array<string>> {
+  const out: Array<string> = []
+  for await (const chunk of it) {
+    if (chunk.data !== undefined) out.push(chunk.data)
+  }
+  return out
+}
 
 describe("chatRequestToResponses", () => {
   test("user-only message becomes input array with input_text", () => {
@@ -248,5 +263,108 @@ describe("responsesToChatResponse", () => {
     }
     const out = responsesToChatResponse(resp)
     expect(out.choices[0].finish_reason).toBe("length")
+  })
+})
+
+describe("responsesStreamToChatStream", () => {
+  test("translates text deltas, leading role chunk, and final stop", async () => {
+    const upstream = fromArray([
+      { event: "response.created", data: JSON.stringify({ response: { id: "r1", model: "gpt-5.5" } }) },
+      { event: "response.output_text.delta", data: JSON.stringify({ delta: "hi " }) },
+      { event: "response.output_text.delta", data: JSON.stringify({ delta: "there" }) },
+      { event: "response.completed", data: JSON.stringify({ response: { id: "r1", model: "gpt-5.5", usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } } }) },
+    ])
+
+    const out = await collect(responsesStreamToChatStream(upstream, "gpt-5.5"))
+
+    // Last chunk must be [DONE]
+    expect(out[out.length - 1]).toBe("[DONE]")
+    // First content chunk should carry role assistant
+    const parsed = out.slice(0, -1).map((d) => JSON.parse(d) as Record<string, any>)
+    expect(parsed[0].choices[0].delta.role).toBe("assistant")
+    // Concatenated content equals "hi there"
+    const concatenated = parsed
+      .map((c) => c.choices[0].delta.content as string | undefined)
+      .filter((x) => typeof x === "string")
+      .join("")
+    expect(concatenated).toBe("hi there")
+    // A chunk with finish_reason "stop" must exist
+    expect(parsed.some((c) => c.choices[0].finish_reason === "stop")).toBe(true)
+    // A chunk must carry usage
+    expect(
+      parsed.some(
+        (c) =>
+          c.usage
+          && c.usage.prompt_tokens === 1
+          && c.usage.completion_tokens === 2,
+      ),
+    ).toBe(true)
+  })
+
+  test("translates function_call_arguments deltas to tool_call deltas", async () => {
+    const upstream = fromArray([
+      { event: "response.created", data: JSON.stringify({ response: { id: "r2" } }) },
+      {
+        event: "response.output_item.added",
+        data: JSON.stringify({
+          output_index: 0,
+          item: {
+            type: "function_call",
+            id: "fc_1",
+            call_id: "call_1",
+            name: "get_weather",
+            arguments: "",
+            status: "in_progress",
+          },
+        }),
+      },
+      {
+        event: "response.function_call_arguments.delta",
+        data: JSON.stringify({ output_index: 0, call_id: "call_1", delta: '{"city":' }),
+      },
+      {
+        event: "response.function_call_arguments.delta",
+        data: JSON.stringify({ output_index: 0, call_id: "call_1", delta: '"NYC"}' }),
+      },
+      { event: "response.completed", data: JSON.stringify({ response: { id: "r2" } }) },
+    ])
+
+    const out = await collect(responsesStreamToChatStream(upstream, "gpt-5.5"))
+    const parsed = out.slice(0, -1).map((d) => JSON.parse(d) as Record<string, any>)
+    // Find the chunk that introduces the tool call (carries name + id)
+    const introChunk = parsed.find(
+      (c) => c.choices[0].delta.tool_calls?.[0]?.function?.name === "get_weather",
+    )
+    expect(introChunk).toBeDefined()
+    expect(introChunk!.choices[0].delta.tool_calls[0].id).toBe("call_1")
+    expect(introChunk!.choices[0].delta.tool_calls[0].index).toBe(0)
+    // Concatenated arguments equal the full JSON
+    const args = parsed
+      .map((c) => c.choices[0].delta.tool_calls?.[0]?.function?.arguments as string | undefined)
+      .filter((x) => typeof x === "string")
+      .join("")
+    expect(args).toBe('{"city":"NYC"}')
+    // Final chunk should have finish_reason tool_calls
+    expect(
+      parsed.some((c) => c.choices[0].finish_reason === "tool_calls"),
+    ).toBe(true)
+  })
+
+  test("response.failed surfaces an error chunk and DONE", async () => {
+    const upstream = fromArray([
+      { event: "response.created", data: JSON.stringify({ response: { id: "r3" } }) },
+      {
+        event: "response.failed",
+        data: JSON.stringify({ response: { id: "r3", error: { message: "boom" } } }),
+      },
+    ])
+    const out = await collect(responsesStreamToChatStream(upstream, "gpt-5.5"))
+    expect(out[out.length - 1]).toBe("[DONE]")
+    const errorChunk = out
+      .slice(0, -1)
+      .map((d) => JSON.parse(d) as Record<string, any>)
+      .find((c) => c.error)
+    expect(errorChunk).toBeDefined()
+    expect(errorChunk!.error.message).toBe("boom")
   })
 })

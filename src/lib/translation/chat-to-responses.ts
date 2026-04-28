@@ -7,9 +7,7 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type {
   ResponsesContentPart,
-  ResponsesFunctionCallOutput,
   ResponsesInputItem,
-  ResponsesMessageOutput,
   ResponsesPayload,
   ResponsesResponse,
   ResponsesTool,
@@ -159,12 +157,12 @@ export function responsesToChatResponse(
 
   for (const item of resp.output) {
     if (item.type === "message") {
-      const m = item as ResponsesMessageOutput
+      const m = item
       for (const part of m.content) {
         if (part.type === "output_text") messageParts.push(part.text)
       }
     } else if (item.type === "function_call") {
-      const fc = item as ResponsesFunctionCallOutput
+      const fc = item
       toolCalls.push({
         id: fc.call_id,
         type: "function",
@@ -175,13 +173,10 @@ export function responsesToChatResponse(
   }
 
   const finishReason: ChatCompletionResponse["choices"][number]["finish_reason"] =
-    toolCalls.length > 0
-      ? "tool_calls"
-      : resp.status === "incomplete"
-        ? "length"
-        : resp.status === "failed"
-          ? "content_filter"
-          : "stop"
+    toolCalls.length > 0 ? "tool_calls"
+    : resp.status === "incomplete" ? "length"
+    : resp.status === "failed" ? "content_filter"
+    : "stop"
 
   const content = messageParts.length > 0 ? messageParts.join("") : null
 
@@ -202,19 +197,198 @@ export function responsesToChatResponse(
         finish_reason: finishReason,
       },
     ],
-    usage: resp.usage
-      ? {
+    usage:
+      resp.usage ?
+        {
           prompt_tokens: resp.usage.input_tokens,
           completion_tokens: resp.usage.output_tokens,
           total_tokens: resp.usage.total_tokens,
-          ...(resp.usage.input_tokens_details
-            ? {
-                prompt_tokens_details: {
-                  cached_tokens: resp.usage.input_tokens_details.cached_tokens ?? 0,
-                },
-              }
-            : {}),
+          ...(resp.usage.input_tokens_details ?
+            {
+              prompt_tokens_details: {
+                cached_tokens:
+                  resp.usage.input_tokens_details.cached_tokens ?? 0,
+              },
+            }
+          : {}),
         }
       : undefined,
   }
+}
+
+import consola from "consola"
+
+interface UpstreamSseEvent {
+  event?: string
+  data?: string
+}
+
+interface ChatChunkOut {
+  data: string
+}
+
+// Maps Copilot /responses SSE events to OpenAI-style chat.completion.chunk SSE.
+// Yields objects shaped like { data: string } to match `events()` from
+// fetch-event-stream so callers (chat-completions handler) can pipe them through
+// without changes. Always ends with a `{ data: "[DONE]" }` sentinel.
+export async function* responsesStreamToChatStream(
+  upstream: AsyncIterable<UpstreamSseEvent>,
+  model: string,
+): AsyncGenerator<ChatChunkOut> {
+  let id = `chatcmpl-stream-${Date.now()}`
+  let emittedRole = false
+  let sawToolCall = false
+  // call_id → index assignment so deltas can be merged client-side
+  const callIndex = new Map<string, number>()
+  let nextIndex = 0
+
+  const baseChunk = (
+    delta: Record<string, unknown>,
+    finish: string | null = null,
+  ) =>
+    JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, delta, finish_reason: finish, logprobs: null }],
+    })
+
+  for await (const evt of upstream) {
+    if (!evt.event || evt.data === undefined) continue
+    let payload: Record<string, any> = {}
+    try {
+      payload = JSON.parse(evt.data) as Record<string, any>
+    } catch {
+      continue
+    }
+
+    switch (evt.event) {
+      case "response.created": {
+        if (payload.response?.id) id = `chatcmpl-${payload.response.id}`
+        // Emit a leading chunk with role:"assistant" so chat clients
+        // can latch onto the assistant turn before content arrives.
+        emittedRole = true
+        yield { data: baseChunk({ role: "assistant" }) }
+        break
+      }
+
+      case "response.output_text.delta": {
+        const delta = payload.delta as string | undefined
+        if (typeof delta !== "string") break
+        if (!emittedRole) {
+          emittedRole = true
+          yield { data: baseChunk({ role: "assistant", content: delta }) }
+        } else {
+          yield { data: baseChunk({ content: delta }) }
+        }
+        break
+      }
+
+      case "response.output_item.added": {
+        const item = payload.item as
+          | { type?: string; call_id?: string; name?: string }
+          | undefined
+        if (item?.type === "function_call" && item.call_id) {
+          sawToolCall = true
+          const idx = nextIndex++
+          callIndex.set(item.call_id, idx)
+          yield {
+            data: baseChunk({
+              tool_calls: [
+                {
+                  index: idx,
+                  id: item.call_id,
+                  type: "function",
+                  function: { name: item.name ?? "", arguments: "" },
+                },
+              ],
+            }),
+          }
+        }
+        break
+      }
+
+      case "response.function_call_arguments.delta": {
+        const delta = payload.delta as string | undefined
+        const callId = payload.call_id as string | undefined
+        if (typeof delta !== "string" || !callId) break
+        const idx = callIndex.get(callId) ?? 0
+        sawToolCall = true
+        yield {
+          data: baseChunk({
+            tool_calls: [
+              {
+                index: idx,
+                function: { arguments: delta },
+              },
+            ],
+          }),
+        }
+        break
+      }
+
+      case "response.completed": {
+        const usage = payload.response?.usage as
+          | {
+              input_tokens?: number
+              output_tokens?: number
+              total_tokens?: number
+            }
+          | undefined
+        const finalChoices = [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: sawToolCall ? "tool_calls" : "stop",
+            logprobs: null,
+          },
+        ]
+        const final = JSON.stringify({
+          id,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model,
+          choices: finalChoices,
+          usage:
+            usage ?
+              {
+                prompt_tokens: usage.input_tokens ?? 0,
+                completion_tokens: usage.output_tokens ?? 0,
+                total_tokens: usage.total_tokens ?? 0,
+              }
+            : undefined,
+        })
+        yield { data: final }
+        yield { data: "[DONE]" }
+        return
+      }
+
+      case "response.failed":
+      case "response.error": {
+        const message =
+          (payload.response?.error?.message as string | undefined)
+          ?? (payload.error?.message as string | undefined)
+          ?? "responses upstream error"
+        yield {
+          data: JSON.stringify({
+            error: { message, type: "upstream_error" },
+          }),
+        }
+        yield { data: "[DONE]" }
+        return
+      }
+
+      default: {
+        // Silently ignore other event types (in_progress, content_part.*, etc.)
+        consola.debug("responsesStreamToChatStream: ignoring event", evt.event)
+      }
+    }
+  }
+
+  // Upstream ended without `response.completed` — close gracefully.
+  yield {
+    data: baseChunk({}, sawToolCall ? "tool_calls" : "stop"),
+  }
+  yield { data: "[DONE]" }
 }
