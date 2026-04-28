@@ -29,8 +29,15 @@ export type CertificateInfo =
 const NOT_CONFIGURED_HINT =
   "Run ./scripts/cert.sh obtain --domain <your-domain> to obtain a certificate."
 
-export async function readCertificateInfo(): Promise<CertificateInfo> {
-  const config = await loadConfig()
+export interface ReadCertOptions {
+  configPath?: string
+  now?: () => number
+}
+
+export async function readCertificateInfo(
+  options: ReadCertOptions = {},
+): Promise<CertificateInfo> {
+  const config = await loadConfig(options.configPath)
   const certPath = config.tls?.cert
   if (!certPath) {
     return {
@@ -44,8 +51,9 @@ export async function readCertificateInfo(): Promise<CertificateInfo> {
     const cert = new X509Certificate(pem)
     const validFrom = new Date(cert.validFrom)
     const validTo = new Date(cert.validTo)
-    const now = Date.now()
+    const now = options.now?.() ?? Date.now()
     const daysRemaining = Math.floor((validTo.getTime() - now) / 86_400_000)
+    const expired = validTo.getTime() < now
     return {
       configured: true,
       domain: config.domain ?? null,
@@ -54,7 +62,7 @@ export async function readCertificateInfo(): Promise<CertificateInfo> {
       validFrom: validFrom.toISOString(),
       validTo: validTo.toISOString(),
       daysRemaining,
-      expired: daysRemaining < 0,
+      expired,
       certPath,
     }
   } catch (error) {
