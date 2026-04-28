@@ -79,13 +79,14 @@ export function recordResponsesOnlyModel(modelId: string): void
 
 ### 白名单生成规则（`rebuildWhitelistFromModels`）
 
+**预研已确认（2026-04-28）**：Copilot `/models` 返回中，Responses-only 的模型用 `supported_endpoints` 数组标识（例：`gpt-5.5` 是 `["/responses", "ws:/responses"]`，不含 `/chat/completions`）。`capabilities.type` 对所有可用模型均为 `"chat"`，不可作判定依据。
+
 按优先级判断每个 model：
 
-1. **明确字段**：`capabilities.type === "responses"` → 命中
-2. **保守启发式（可选，仅在第 0 步抓包后确认有必要才启用）**：`capabilities.type` 不在 `{"chat", "embeddings", "completion"}` 之列 → 命中
-3. 其它都不命中
+1. **`supported_endpoints` 数组存在 且 包含 `"/responses"` 且 不包含 `"/chat/completions"`** → 命中（Responses-only）
+2. 其它都不命中（包括 `supported_endpoints` 缺失/为 `null` 的旧模型，以及双栈模型如 `gpt-5.4`）
 
-> ⚠️ **不确定性**：当前没法证实 Copilot `/models` 一定会返回 `type: "responses"`。**实现阶段第 0 步必须先抓一次真实 `/models` 输出**确认。如果 Copilot 完全不暴露此类字段，规则 1 永不命中，白名单退化为空，靠运行时缓存兜底（首次调用某新模型会失败一次）。
+> 双栈模型（同时支持两个端点）保持走 `/chat/completions` 不变，避免引入回归。运行时缓存兜底仍保留：若上游意外返回 `unsupported_api_for_model`，自动加入缓存并改走 `/responses`。
 
 ### 触发时机
 

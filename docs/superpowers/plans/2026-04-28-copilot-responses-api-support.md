@@ -4,7 +4,9 @@
 
 **Goal:** Add a public `/v1/responses` endpoint and transparent fallback so `/chat/completions` and `/v1/messages` clients can use Copilot models that are only exposed via `/responses` (e.g. `gpt-5.5`).
 
-**Architecture:** A new `create-responses.ts` upstream service is added alongside `create-chat-completions.ts`. A `responses-routing` module keeps an in-memory whitelist (auto-built from `/models`) plus a runtime cache of models that returned `unsupported_api_for_model`. A bidirectional `chat-to-responses` translation module converts between protocols so existing chat-shaped paths can transparently call `/responses`. A new `/v1/responses` route forwards directly to upstream without translation.
+**Architecture:** A new `create-responses.ts` upstream service is added alongside `create-chat-completions.ts`. A `responses-routing` module keeps an in-memory whitelist (auto-built from `/models` by inspecting each model's `supported_endpoints` array) plus a runtime cache of models that returned `unsupported_api_for_model`. A bidirectional `chat-to-responses` translation module converts between protocols so existing chat-shaped paths can transparently call `/responses`. A new `/v1/responses` route forwards directly to upstream without translation.
+
+**Pre-flight outcome (Task 0, completed 2026-04-28):** Copilot `/models` exposes a `supported_endpoints` field, NOT a `capabilities.type === "responses"`. Responses-only models like `gpt-5.5` show `["/responses","ws:/responses"]`; chat-only models omit the field; dual-stack models like `gpt-5.4` show both. The translation tables in tasks 4-6 are otherwise unchanged — Copilot `/responses` SSE matches the OpenAI public protocol (with extra ignorable fields like `phase`, `obfuscation`, `prompt_cache_retention`).
 
 **Tech Stack:** Bun · Hono · TypeScript (strict) · zod · consola · `fetch-event-stream`
 
@@ -108,7 +110,10 @@ import {
 } from "../src/lib/responses-routing"
 import type { Model } from "../src/services/copilot/get-models"
 
-const makeModel = (id: string, type: string): Model =>
+const makeModel = (
+  id: string,
+  supported_endpoints?: Array<string>,
+): Model =>
   ({
     id,
     name: id,
@@ -117,11 +122,12 @@ const makeModel = (id: string, type: string): Model =>
     version: "1",
     preview: false,
     model_picker_enabled: true,
+    ...(supported_endpoints ? { supported_endpoints } : {}),
     capabilities: {
       family: id,
       object: "model_capabilities",
       tokenizer: "cl100k_base",
-      type,
+      type: "chat",
       limits: {},
       supports: {},
     },
@@ -136,13 +142,24 @@ describe("responses-routing", () => {
     expect(shouldUseResponsesEndpoint("gpt-4o")).toBe(false)
   })
 
-  test("rebuildWhitelistFromModels picks up models with type === 'responses'", () => {
+  test("models with supported_endpoints containing /responses but not /chat/completions are whitelisted", () => {
     rebuildWhitelistFromModels([
-      makeModel("gpt-4o", "chat"),
-      makeModel("gpt-5.5", "responses"),
+      makeModel("gpt-4o"), // legacy: no supported_endpoints
+      makeModel("gpt-5.5", ["/responses", "ws:/responses"]),
     ])
     expect(shouldUseResponsesEndpoint("gpt-5.5")).toBe(true)
     expect(shouldUseResponsesEndpoint("gpt-4o")).toBe(false)
+  })
+
+  test("dual-stack models (responses + chat/completions) are NOT whitelisted", () => {
+    rebuildWhitelistFromModels([
+      makeModel("gpt-5.4", [
+        "/responses",
+        "/chat/completions",
+        "ws:/responses",
+      ]),
+    ])
+    expect(shouldUseResponsesEndpoint("gpt-5.4")).toBe(false)
   })
 
   test("recordResponsesOnlyModel adds to runtime cache", () => {
@@ -153,14 +170,16 @@ describe("responses-routing", () => {
 
   test("rebuildWhitelistFromModels does not clear runtime cache", () => {
     recordResponsesOnlyModel("gpt-secret")
-    rebuildWhitelistFromModels([makeModel("gpt-4o", "chat")])
+    rebuildWhitelistFromModels([makeModel("gpt-4o")])
     expect(shouldUseResponsesEndpoint("gpt-secret")).toBe(true)
   })
 
   test("rebuildWhitelistFromModels replaces previous static whitelist", () => {
-    rebuildWhitelistFromModels([makeModel("gpt-5.5", "responses")])
+    rebuildWhitelistFromModels([
+      makeModel("gpt-5.5", ["/responses", "ws:/responses"]),
+    ])
     expect(shouldUseResponsesEndpoint("gpt-5.5")).toBe(true)
-    rebuildWhitelistFromModels([makeModel("gpt-4o", "chat")])
+    rebuildWhitelistFromModels([makeModel("gpt-4o")])
     expect(shouldUseResponsesEndpoint("gpt-5.5")).toBe(false)
   })
 })
@@ -191,7 +210,13 @@ export function shouldUseResponsesEndpoint(modelId: string): boolean {
 export function rebuildWhitelistFromModels(models: Array<Model>): void {
   const next = new Set<string>()
   for (const model of models) {
-    if (model.capabilities?.type === "responses") {
+    const endpoints = (model as Model & { supported_endpoints?: Array<string> })
+      .supported_endpoints
+    if (!Array.isArray(endpoints)) continue
+    if (
+      endpoints.includes("/responses")
+      && !endpoints.includes("/chat/completions")
+    ) {
       next.add(model.id)
     }
   }
@@ -237,7 +262,29 @@ git commit -m "feat(routing): add responses-endpoint whitelist + runtime cache"
 cat src/services/copilot/get-models.ts
 ```
 
-- [ ] **Step 2: Modify `getModels` to rebuild whitelist on success**
+- [ ] **Step 2: Add `supported_endpoints` to the Model interface**
+
+In `src/services/copilot/get-models.ts`, edit the `Model` interface to include the new optional field:
+
+```typescript
+export interface Model {
+  capabilities: ModelCapabilities
+  id: string
+  model_picker_enabled: boolean
+  name: string
+  object: string
+  preview: boolean
+  vendor: string
+  version: string
+  supported_endpoints?: Array<string>
+  policy?: {
+    state: string
+    terms: string
+  }
+}
+```
+
+- [ ] **Step 3: Modify `getModels` to rebuild whitelist on success**
 
 Replace the body of `getModels` so the function returns the response after rebuilding:
 
@@ -262,7 +309,7 @@ export const getModels = async () => {
 
 (Leave the type definitions below the function unchanged.)
 
-- [ ] **Step 3: Verify typecheck and lint**
+- [ ] **Step 4: Verify typecheck and lint**
 
 ```bash
 bun run typecheck && bun run lint
@@ -270,7 +317,7 @@ bun run typecheck && bun run lint
 
 Expected: no errors.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/services/copilot/get-models.ts
