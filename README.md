@@ -217,10 +217,11 @@ bun run start      # 生产模式启动
 | 端点 | 方法 | 描述 |
 | --- | --- | --- |
 | `/v1/chat/completions` | `POST` | 创建聊天补全 |
+| `/v1/responses` | `POST` | 创建 Responses API 响应（透传 Copilot `/responses`） |
 | `/v1/models` | `GET` | 列出可用模型 |
 | `/v1/embeddings` | `POST` | 创建 embedding 向量 |
 
-> 不带 `/v1` 前缀的同名路径也可用（`/chat/completions`、`/models`、`/embeddings`）。
+> 不带 `/v1` 前缀的同名路径也可用（`/chat/completions`、`/responses`、`/models`、`/embeddings`）。
 
 ### Anthropic 兼容
 
@@ -291,6 +292,49 @@ curl http://localhost:4141/v1/messages \
 ```
 
 打开 `http://localhost:4141/`，把超管 token 粘贴到登录表单提交即可。出于安全考虑，token 不再通过 URL 查询参数传递（避免泄露到浏览器历史、shell 历史与 HTTP 请求来源头部）。登录成功后 session 写入 HttpOnly Cookie，后续 reload 不需要再次输入。
+
+## Responses API 支持
+
+部分 Copilot 模型（例如 `gpt-5.5`）只在上游的 `/responses` 端点开放，调用 `/chat/completions` 会返回 `unsupported_api_for_model`。本代理提供两条路径：
+
+### 1. 直接使用 `/v1/responses`
+
+OpenAI Responses API 兼容，可直接配合 OpenAI SDK 使用：
+
+```ts
+import OpenAI from "openai"
+
+const client = new OpenAI({
+  baseURL: "http://localhost:4141/v1",
+  apiKey: process.env.PROXY_TOKEN,
+})
+
+const response = await client.responses.create({
+  model: "gpt-5.5",
+  input: "Hello!",
+})
+console.log(response.output[0])
+```
+
+curl 等价形式：
+
+```bash
+curl -sS http://localhost:4141/v1/responses \
+  -H "Authorization: Bearer $PROXY_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"model":"gpt-5.5","input":"hello"}'
+```
+
+> 服务端会话状态（`previous_response_id`、`store: true`）**不**支持，传入会返回 `400`。代理始终无状态。
+
+### 2. `/chat/completions` 与 `/v1/messages` 透明 fallback
+
+只会说 Chat Completions 或 Anthropic Messages 协议的客户端（Claude Code 等）无须改动即可使用 Responses-only 模型。代理通过两层判断决定是否走 `/responses`：
+
+1. **自动白名单**：启动以及每次模型刷新时扫描 `/models`，凡 `supported_endpoints` 包含 `/responses` 且不含 `/chat/completions` 的模型，标记为 Responses-only。
+2. **运行时兜底**：若 `/chat/completions` 上游返回 `unsupported_api_for_model`，自动改走 `/responses` 重试，并把模型加入运行时缓存，后续直接走新路径。
+
+这两条路径上，客户端始终看到标准 `chat.completion`（或 Anthropic Messages）响应，翻译在代理内部完成。流式 fallback 仅在上游首字节前生效；若上游已经开始返回 SSE，错误透传给客户端。
 
 ## 数据库
 
