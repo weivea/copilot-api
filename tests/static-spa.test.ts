@@ -78,9 +78,16 @@ describe("staticSpa", () => {
     expect(await second.text()).toBe("")
   })
 
-  test("path traversal is rejected", async () => {
+  test("path traversal does not leak files outside root", async () => {
+    // Hono normalises `/../../etc/passwd` to `/etc/passwd` before the
+    // middleware runs, so traversal cannot escape root via URL alone.
+    // Verify the middleware never serves /etc/passwd (it falls back to
+    // index.html as a normal SPA route would).
     const res = await makeApp().request("/../../etc/passwd")
-    expect(res.status).toBe(404)
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toBe("<html>app</html>")
+    expect(body).not.toContain("root:")
   })
 
   test("missing asset falls back to index.html", async () => {
