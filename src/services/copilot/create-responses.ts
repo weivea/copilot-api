@@ -5,9 +5,7 @@ import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
-function isMessageItem(
-  item: ResponsesInputItem,
-): item is ResponsesMessageItem {
+function isMessageItem(item: ResponsesInputItem): item is ResponsesMessageItem {
   return item.type === undefined || item.type === "message"
 }
 
@@ -46,7 +44,7 @@ export const createResponses = async (
     "Sending to upstream /responses, model:",
     payload.model,
     "stream:",
-    !!payload.stream,
+    Boolean(payload.stream),
   )
 
   const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
