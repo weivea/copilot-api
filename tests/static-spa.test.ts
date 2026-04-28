@@ -1,8 +1,8 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 
 import { staticSpa } from "~/lib/static-spa"
 
@@ -15,14 +15,8 @@ beforeAll(() => {
     path.join(ROOT, "assets", "index-abc123.js"),
     "console.log('raw')",
   )
-  fs.writeFileSync(
-    path.join(ROOT, "assets", "index-abc123.js.br"),
-    "BR-BYTES",
-  )
-  fs.writeFileSync(
-    path.join(ROOT, "assets", "index-abc123.js.gz"),
-    "GZ-BYTES",
-  )
+  fs.writeFileSync(path.join(ROOT, "assets", "index-abc123.js.br"), "BR-BYTES")
+  fs.writeFileSync(path.join(ROOT, "assets", "index-abc123.js.gz"), "GZ-BYTES")
 })
 
 afterAll(() => {
@@ -75,7 +69,8 @@ describe("staticSpa", () => {
 
   test("returns 304 when If-None-Match matches index ETag", async () => {
     const first = await makeApp().request("/")
-    const etag = first.headers.get("etag")!
+    const etag = first.headers.get("etag")
+    if (!etag) throw new Error("expected etag")
     const second = await makeApp().request("/", {
       headers: { "if-none-match": etag },
     })
