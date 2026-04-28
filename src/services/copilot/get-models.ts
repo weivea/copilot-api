@@ -1,5 +1,6 @@
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { rebuildWhitelistFromModels } from "~/lib/responses-routing"
 import { state } from "~/lib/state"
 
 export const getModels = async () => {
@@ -9,7 +10,9 @@ export const getModels = async () => {
 
   if (!response.ok) throw new HTTPError("Failed to get models", response)
 
-  return (await response.json()) as ModelsResponse
+  const data = (await response.json()) as ModelsResponse
+  rebuildWhitelistFromModels(data.data)
+  return data
 }
 
 export interface ModelsResponse {
@@ -48,6 +51,7 @@ export interface Model {
   preview: boolean
   vendor: string
   version: string
+  supported_endpoints?: Array<string>
   policy?: {
     state: string
     terms: string

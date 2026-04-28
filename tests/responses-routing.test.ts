@@ -9,25 +9,24 @@ import {
   resetResponsesRouting,
 } from "../src/lib/responses-routing"
 
-const makeModel = (id: string, supported_endpoints?: Array<string>): Model =>
-  ({
-    id,
-    name: id,
-    object: "model",
-    vendor: "test",
-    version: "1",
-    preview: false,
-    model_picker_enabled: true,
-    ...(supported_endpoints ? { supported_endpoints } : {}),
-    capabilities: {
-      family: id,
-      object: "model_capabilities",
-      tokenizer: "cl100k_base",
-      type: "chat",
-      limits: {},
-      supports: {},
-    },
-  }) as Model
+const makeModel = (id: string, supported_endpoints?: Array<string>): Model => ({
+  id,
+  name: id,
+  object: "model",
+  vendor: "test",
+  version: "1",
+  preview: false,
+  model_picker_enabled: true,
+  ...(supported_endpoints ? { supported_endpoints } : {}),
+  capabilities: {
+    family: id,
+    object: "model_capabilities",
+    tokenizer: "cl100k_base",
+    type: "chat",
+    limits: {},
+    supports: {},
+  },
+})
 
 describe("responses-routing", () => {
   beforeEach(() => {

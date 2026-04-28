@@ -10,8 +10,7 @@ export function shouldUseResponsesEndpoint(modelId: string): boolean {
 export function rebuildWhitelistFromModels(models: Array<Model>): void {
   const next = new Set<string>()
   for (const model of models) {
-    const endpoints = (model as Model & { supported_endpoints?: Array<string> })
-      .supported_endpoints
+    const endpoints = model.supported_endpoints
     if (!Array.isArray(endpoints)) continue
     if (
       endpoints.includes("/responses")
