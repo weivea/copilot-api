@@ -314,9 +314,9 @@ export const start = defineCommand({
       tlsKey: args["tls-key"],
       httpRedirectPort:
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        args["http-redirect-port"] === undefined
-          ? undefined
-          : Number.parseInt(args["http-redirect-port"], 10),
+        args["http-redirect-port"] === undefined ?
+          undefined
+        : Number.parseInt(args["http-redirect-port"], 10),
       dbPath: args["db-path"],
       logRetentionDays: Number.parseInt(args["log-retention-days"], 10) || 90,
       dashboard: args.dashboard,

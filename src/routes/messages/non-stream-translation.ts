@@ -306,7 +306,10 @@ export function translateToAnthropic(
     allToolUseBlocks.push(...toolUseBlocks)
 
     const fr = choice.finish_reason as OpenAIStop | null | undefined
-    if (fr && (stopReason === null || STOP_PRIORITY[fr] > STOP_PRIORITY[stopReason])) {
+    if (
+      fr
+      && (stopReason === null || STOP_PRIORITY[fr] > STOP_PRIORITY[stopReason])
+    ) {
       stopReason = fr
     }
   }

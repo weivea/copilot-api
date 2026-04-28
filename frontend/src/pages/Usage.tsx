@@ -177,7 +177,9 @@ export function Usage() {
         />
         <SummaryCard
           label="Monthly %"
-          value={summary ? pct(summary.monthly_used, summary.monthly_limit) : "—"}
+          value={
+            summary ? pct(summary.monthly_used, summary.monthly_limit) : "—"
+          }
         />
         <SummaryCard
           label="Lifetime used"

@@ -51,12 +51,7 @@ function resolveSpaRoot(): string {
   // virtual FS, so resolve relative to the binary on disk instead.
   // Layout in the release tarball:  release/bin/copilot-api  →  release/dist/public
   if (import.meta.dir.startsWith("/$bunfs/")) {
-    return path.resolve(
-      path.dirname(process.execPath),
-      "..",
-      "dist",
-      "public",
-    )
+    return path.resolve(path.dirname(process.execPath), "..", "dist", "public")
   }
   // Dev / `bun run src/main.ts`: resolve relative to source.
   return path.resolve(import.meta.dir, "..", "dist", "public")

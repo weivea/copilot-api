@@ -40,7 +40,7 @@ adminGithubAuthRoutes.post("/device-flow/start", async (c) => {
       interval: flow.intervalSec,
     })
   } catch (error) {
-    return await forwardError(c, error)
+    return forwardError(c, error)
   }
 })
 

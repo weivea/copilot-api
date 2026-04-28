@@ -13,7 +13,10 @@ import {
   responsesStreamToChatStream,
   responsesToChatResponse,
 } from "~/lib/translation/chat-to-responses"
-import { createResponses } from "~/services/copilot/create-responses"
+import {
+  createResponses,
+  type ResponsesResponse,
+} from "~/services/copilot/create-responses"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
@@ -89,18 +92,20 @@ async function callViaResponses(
   options?: { signal?: AbortSignal },
 ) {
   const responsesPayload = chatRequestToResponses(payload)
-  const upstream = await createResponses(responsesPayload, options)
 
   if (payload.stream) {
-    return responsesStreamToChatStream(
-      upstream as AsyncIterable<{ event?: string; data?: string }>,
-      payload.model,
-    )
+    const upstream = (await createResponses(
+      responsesPayload,
+      options,
+    )) as AsyncIterable<{ event?: string; data?: string }>
+    return responsesStreamToChatStream(upstream, payload.model)
   }
 
-  return responsesToChatResponse(
-    upstream as Awaited<ReturnType<typeof createResponses>> as any,
-  )
+  const upstream = (await createResponses(
+    responsesPayload,
+    options,
+  )) as ResponsesResponse
+  return responsesToChatResponse(upstream)
 }
 
 function isUnsupportedApiForModelError(error: unknown): boolean {

@@ -5,7 +5,10 @@ import {
   resetResponsesRouting,
 } from "../src/lib/responses-routing"
 import { state } from "../src/lib/state"
-import { createChatCompletions } from "../src/services/copilot/create-chat-completions"
+import {
+  createChatCompletions,
+  type ChatCompletionResponse,
+} from "../src/services/copilot/create-chat-completions"
 
 const realFetch = globalThis.fetch
 
@@ -29,7 +32,7 @@ describe("createChatCompletions fallback to /responses", () => {
     recordResponsesOnlyModel("gpt-5.5")
     const calls: Array<string> = []
     globalThis.fetch = ((input: Request | string) => {
-      const url = typeof input === "string" ? input : (input as Request).url
+      const url = typeof input === "string" ? input : input.url
       calls.push(url)
       return Promise.resolve(
         jsonResponse({
@@ -60,8 +63,10 @@ describe("createChatCompletions fallback to /responses", () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].endsWith("/responses")).toBe(true)
     if ("choices" in (result as object)) {
-      expect((result as any).choices[0].message.content).toBe("hi")
-      expect((result as any).object).toBe("chat.completion")
+      expect(
+        (result as ChatCompletionResponse).choices[0].message.content,
+      ).toBe("hi")
+      expect((result as ChatCompletionResponse).object).toBe("chat.completion")
     } else {
       throw new Error("expected non-streaming chat completion shape")
     }
@@ -70,7 +75,7 @@ describe("createChatCompletions fallback to /responses", () => {
   test("auto-fallback on unsupported_api_for_model error", async () => {
     const seen: Array<string> = []
     globalThis.fetch = ((input: Request | string) => {
-      const url = typeof input === "string" ? input : (input as Request).url
+      const url = typeof input === "string" ? input : input.url
       seen.push(url)
       if (url.endsWith("/chat/completions")) {
         return Promise.resolve(
@@ -113,13 +118,15 @@ describe("createChatCompletions fallback to /responses", () => {
 
     expect(seen[0].endsWith("/chat/completions")).toBe(true)
     expect(seen[1].endsWith("/responses")).toBe(true)
-    expect((result as any).choices[0].message.content).toBe("ok")
+    expect((result as ChatCompletionResponse).choices[0].message.content).toBe(
+      "ok",
+    )
   })
 
   test("non-fallback errors are not retried", async () => {
     const seen: Array<string> = []
     globalThis.fetch = ((input: Request | string) => {
-      const url = typeof input === "string" ? input : (input as Request).url
+      const url = typeof input === "string" ? input : input.url
       seen.push(url)
       return Promise.resolve(
         jsonResponse(
