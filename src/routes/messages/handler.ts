@@ -125,9 +125,14 @@ async function runAnthropicStream(
     upstreamController.abort()
   })
 
-  // Periodic SSE ping to keep intermediaries from closing the socket
-  // while upstream is slow to produce the first / next token.
-  const pingInterval = setInterval(() => {
+  // Periodic SSE ping to keep intermediaries (and the Anthropic SDK's own
+  // streaming idle timer) from closing the socket while upstream is slow
+  // to produce the first / next token. Send one immediately so the client
+  // observes bytes within its idle window even when upstream "thinking"
+  // delays the first real chunk by 10+ seconds; then refresh every 10s,
+  // which stays comfortably under the shortest idle timeout we've observed
+  // in the wild (~16s on the Anthropic SDK side).
+  const sendPing = () => {
     if (abortState.aborted || stream.closed) return
     stream
       .writeSSE({
@@ -137,7 +142,12 @@ async function runAnthropicStream(
       .catch(() => {
         /* ignore: stream may be closing */
       })
-  }, 15_000)
+  }
+  // Fire-and-forget: writeSSE returns a promise, but we don't need to
+  // await it before entering the read loop — the next iteration will
+  // serialize naturally on the same stream.
+  sendPing()
+  const pingInterval = setInterval(sendPing, 10_000)
 
   try {
     for await (const rawEvent of response) {

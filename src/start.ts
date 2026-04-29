@@ -172,6 +172,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     fetch: server.fetch as ServerHandler,
     port: options.port,
     ...(tls && { tls }),
+    // Raise Bun's per-request idle timeout from the 10s default. Streamed
+    // /v1/messages requests can stay silent for >10s while the upstream
+    // model is "thinking", which would otherwise trip Bun.serve into
+    // closing the socket and surfacing as AbortError on our end.
+    bun: { idleTimeout: 255 },
   })
 
   if (tls && options.httpRedirectPort !== undefined) {
