@@ -94,6 +94,95 @@ release/
 
 > 二进制内的 SPA 静态目录路径会自动从 `process.execPath` 解算，无需额外配置；如需覆盖可设置 `COPILOT_API_SPA_ROOT` 环境变量。
 
+### 生产部署：systemd 保活（Linux 推荐）
+
+release tarball 自带 `install.sh`，可以一键把服务装成 systemd unit，进程自动保活，crash 信息落盘。
+
+**前置条件**：Linux + systemd + root/sudo（或者用 `--user-mode` 走用户级 systemd）。
+
+#### 安装
+
+```sh
+tar -xzf copilot-api-vX.Y.Z-linux-x64.tar.gz
+cd release
+cp .env.example .env && $EDITOR .env       # 可选：编辑启动参数
+sudo ./scripts/install.sh                  # 默认会立刻启动
+systemctl status copilot-api
+```
+
+`install.sh` 支持的参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--user <name>` | `$SUDO_USER` 或 `$USER` | 服务以哪个系统用户身份运行 |
+| `--name <service>` | `copilot-api` | systemd unit 名 |
+| `--user-mode` | off | 装到 `~/.config/systemd/user/`，需配合 `loginctl enable-linger` |
+| `--no-start` | off | 只 enable 不 start |
+| `--render-only` | off | 只把渲染出的 unit 打到 stdout，不写文件 |
+
+#### 日常操作
+
+装完之后所有控制走 `systemctl`：
+
+```sh
+sudo systemctl restart copilot-api          # 改了 .env 之后重启
+sudo systemctl stop copilot-api             # 停
+sudo systemctl start copilot-api            # 启
+systemctl status copilot-api                # 状态
+journalctl -u copilot-api -f                # 跟日志
+journalctl -u copilot-api -p err -S today   # 今天的错误
+ls -lt release/crashes/ | head              # 最近 crash 报告
+cat release/crashes/20260512T034512Z.txt    # 看具体一份 crash
+```
+
+> 现有 `scripts/start.sh` / `stop.sh` / `restart.sh` 会自动检测 systemd unit，存在时转发到 `systemctl`，所以旧命令也能用（默认 unit 名 `copilot-api` 才会被检测到）。
+
+#### crash 信息落盘到哪里？
+
+每次进程异常退出（OOM、`kill -9`、未捕获异常等）都会同时在三处留痕：
+
+- **`release/crashes/<UTC>.txt`** ← **主入口**，self-contained 报告：退出原因 + journald 末 200 行 + 应用日志末 200 行 + 系统快照（uptime/free/df）。自动滚动保留最新 50 份。
+- **`release/copilot-api.log`** ← systemd 持续追加的 stdout/stderr 全量原始流。
+- **systemd journald** ← 同 stdout/stderr，加上 unit 级元数据（重启次数、信号号等），用 `journalctl -u copilot-api` 查询。
+
+`systemctl stop` / `restart` 这种主动操作不会留 crash 报告。
+
+#### 升级（in-place 覆盖）
+
+```sh
+cd ~/copilot-api                                       # release/ 所在的上级目录
+tar -xzf copilot-api-vX.Y.Z-linux-x64.tar.gz          # 直接覆盖 release/
+sudo systemctl restart copilot-api                     # 加载新二进制
+```
+
+升级时**不会**被覆盖的文件（都不在 tar 里）：
+
+- `release/.env` — 用户配置
+- `release/copilot-api.log` — 运行时由 systemd 写
+- `release/crashes/` — 运行时由 crash-handler 写
+- `~/.local/share/copilot-api/` — token，跟 release 目录无关
+
+如果新版本的 systemd unit 模板也有变更，再次运行 `sudo ./scripts/install.sh` 即可（脚本是幂等的，会检测到 release-schema 不匹配并提示）。
+
+#### 卸载
+
+```sh
+cd ~/copilot-api/release
+sudo ./scripts/uninstall.sh
+```
+
+只删 systemd unit，不动 `release/`、`.env`、`crashes/`、`~/.local/share/copilot-api/`。
+
+#### 重启策略说明
+
+- `Restart=on-failure`：进程异常退出（信号、非 0 退出码、OOM）时自动重启；`systemctl stop` 不会触发重启。
+- `RestartSec=5s`：等 5 秒再拉起，避免在依赖故障时把上游打爆。
+- `StartLimitBurst=0`：禁用 systemd 默认的"10 秒内崩 5 次就熔断"，确保上游恢复后能自愈。代价：配置错误会无限重启，这种情况通过 `crashes/` 文件数和 `journalctl` 立刻能看到。
+
+#### 非 systemd 环境
+
+没有 systemd 的环境（容器内、Alpine、macOS、Windows）继续使用 `./scripts/start.sh`，行为不变（`nohup` + PID 文件）。生产环境下推荐 systemd 路径。
+
 ### 方式 B：从源码安装
 
 ```sh
