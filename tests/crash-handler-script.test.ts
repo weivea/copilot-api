@@ -1,6 +1,6 @@
 import { $ } from "bun"
 import { describe, test, expect, afterEach } from "bun:test"
-import { readdir } from "node:fs/promises"
+import { readdir, utimes } from "node:fs/promises"
 import path from "node:path"
 
 import { makeReleaseFixture } from "./helpers/shell-fixtures"
@@ -88,5 +88,42 @@ describe("crash-handler.sh", () => {
 
     // Filename should be a UTC timestamp like 20260512T034512Z.txt
     expect(entries[0]).toMatch(/^\d{8}T\d{6}Z\.txt$/)
+  })
+
+  test("rotation keeps newest 50 reports", async () => {
+    const fx = await makeReleaseFixture()
+    const localCleanup = fx.cleanup
+    cleanup = localCleanup
+    await $`chmod +x ${path.join(fx.scriptsDir, "crash-handler.sh")}`.quiet()
+
+    const crashDir = path.join(fx.releaseDir, "crashes")
+    await $`mkdir -p ${crashDir}`.quiet()
+
+    // Pre-seed 60 fake reports with monotonically increasing mtimes by
+    // touching each one with a distinct date in 2020-01-01 .. 2020-03-01 range.
+    for (let i = 0; i < 60; i++) {
+      const ts = `2020010${(i % 10) + 1}T00${String(i).padStart(2, "0")}00Z`
+      const fp = path.join(crashDir, `${ts}.txt`)
+      await Bun.write(fp, `seed ${i}`)
+      // Stagger mtime so `ls -t` ordering is deterministic.
+      const epoch = 1577836800 + i * 60 // 2020-01-01T00:00:00Z + i minutes
+      await utimes(fp, epoch, epoch)
+    }
+
+    const proc = await $`${path.join(fx.scriptsDir, "crash-handler.sh")}`
+      .env({
+        ...process.env,
+        SERVICE_RESULT: "signal",
+        EXIT_STATUS: "9",
+        SERVICE_NAME: "copilot-api",
+      })
+      .quiet()
+      .nothrow()
+    expect(proc.exitCode).toBe(0)
+
+    const entries = await readdir(crashDir)
+    // Started with 60 seeded files. The handler wrote 1 new file (61 total),
+    // then `tail -n +51` removed the 11 oldest (60 + 1 - 50 = 11), leaving 50.
+    expect(entries.length).toBe(50)
   })
 })
