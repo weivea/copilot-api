@@ -1,0 +1,38 @@
+# release-schema=1
+[Unit]
+Description=Copilot API (GitHub Copilot -> OpenAI/Anthropic proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__RELEASE_DIR__
+EnvironmentFile=__RELEASE_DIR__/.env
+ExecStart=/bin/sh -c '__RELEASE_DIR__/bin/copilot-api start $COPILOT_API_ARGS'
+ExecStopPost=__RELEASE_DIR__/scripts/crash-handler.sh
+
+# Keepalive: restart on abnormal exit (signal, non-zero code, OOM, etc.)
+# but not on a clean systemctl stop. 5s pause avoids tight crash-loops.
+# StartLimitBurst=0 disables systemd's built-in throttle (default would
+# fail-stop after 5 restarts in 10s, which is too aggressive here).
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=0
+StartLimitIntervalSec=0
+
+# Logging: append to release/copilot-api.log AND journald simultaneously.
+StandardOutput=append:__RELEASE_DIR__/copilot-api.log
+StandardError=append:__RELEASE_DIR__/copilot-api.log
+SyslogIdentifier=__SERVICE_NAME__
+
+# Make SERVICE_NAME visible to ExecStopPost (systemd does not inject it).
+Environment=SERVICE_NAME=__SERVICE_NAME__
+
+# Resource & basic hardening.
+LimitNOFILE=65535
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
