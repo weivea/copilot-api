@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# If a systemd unit was installed via scripts/install.sh, delegate to it so
+# `systemctl status` / `restart` / journalctl all stay coherent. The shim
+# matches the default install (system-wide, name=copilot-api). Custom installs
+# (--user-mode or --name <other>) are expected to use systemctl directly.
+if [ -f /etc/systemd/system/copilot-api.service ] && command -v systemctl >/dev/null 2>&1; then
+  if [ "$(id -u)" = "0" ]; then
+    exec systemctl start copilot-api
+  else
+    exec sudo systemctl start copilot-api
+  fi
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PID_FILE="$PROJECT_DIR/copilot-api.pid"
