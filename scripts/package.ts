@@ -101,12 +101,34 @@ async function main() {
   console.log("[package] copying control scripts into release")
   const scriptsOut = path.join(RELEASE, "scripts")
   await fs.mkdir(scriptsOut, { recursive: true })
-  for (const name of ["start.sh", "stop.sh", "restart.sh", "cert.sh"]) {
+  for (const name of [
+    "start.sh",
+    "stop.sh",
+    "restart.sh",
+    "cert.sh",
+    "install.sh",
+    "uninstall.sh",
+    "crash-handler.sh",
+  ]) {
     const src = path.join(ROOT, "scripts", name)
     const dst = path.join(scriptsOut, name)
     await fs.copyFile(src, dst)
     await fs.chmod(dst, 0o755)
   }
+
+  console.log("[package] copying systemd unit template into release")
+  const systemdOut = path.join(scriptsOut, "systemd")
+  await fs.mkdir(systemdOut, { recursive: true })
+  await fs.copyFile(
+    path.join(ROOT, "scripts", "systemd", "copilot-api.service.template"),
+    path.join(systemdOut, "copilot-api.service.template"),
+  )
+
+  console.log("[package] copying .env.example into release root")
+  await fs.copyFile(
+    path.join(ROOT, "scripts", ".env.example"),
+    path.join(RELEASE, ".env.example"),
+  )
 
   console.log(`[package] creating ${tarName}`)
   await $`tar -czf ${tarPath} -C ${DIST} release`
