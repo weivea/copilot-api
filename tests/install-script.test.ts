@@ -61,4 +61,79 @@ describe("install.sh", () => {
     expect(out).not.toContain("__RELEASE_DIR__")
     expect(out).not.toContain("__SERVICE_NAME__")
   })
+
+  test("--user defaults to $USER when SUDO_USER is unset", async () => {
+    const fx = await makeReleaseFixture()
+    const localCleanup = fx.cleanup
+    cleanup = localCleanup
+    await seedSystemdTemplate(fx.releaseDir)
+    await $`chmod +x ${path.join(fx.scriptsDir, "install.sh")}`.quiet()
+
+    const env = { ...process.env, USER: "alice" }
+    delete (env as Record<string, string | undefined>).SUDO_USER
+
+    const proc =
+      await $`${path.join(fx.scriptsDir, "install.sh")} --render-only`
+        .cwd(fx.releaseDir)
+        .env(env)
+        .quiet()
+        .nothrow()
+
+    expect(proc.exitCode).toBe(0)
+    expect(proc.stdout.toString()).toContain("User=alice")
+  })
+
+  test("--user prefers SUDO_USER over USER", async () => {
+    const fx = await makeReleaseFixture()
+    const localCleanup = fx.cleanup
+    cleanup = localCleanup
+    await seedSystemdTemplate(fx.releaseDir)
+    await $`chmod +x ${path.join(fx.scriptsDir, "install.sh")}`.quiet()
+
+    const proc =
+      await $`${path.join(fx.scriptsDir, "install.sh")} --render-only`
+        .cwd(fx.releaseDir)
+        .env({ ...process.env, USER: "root", SUDO_USER: "deployer" })
+        .quiet()
+        .nothrow()
+
+    expect(proc.exitCode).toBe(0)
+    expect(proc.stdout.toString()).toContain("User=deployer")
+  })
+
+  test("--name defaults to copilot-api", async () => {
+    const fx = await makeReleaseFixture()
+    const localCleanup = fx.cleanup
+    cleanup = localCleanup
+    await seedSystemdTemplate(fx.releaseDir)
+    await $`chmod +x ${path.join(fx.scriptsDir, "install.sh")}`.quiet()
+
+    const proc =
+      await $`${path.join(fx.scriptsDir, "install.sh")} --render-only --user x`
+        .cwd(fx.releaseDir)
+        .quiet()
+        .nothrow()
+
+    expect(proc.exitCode).toBe(0)
+    const out = proc.stdout.toString()
+    expect(out).toContain("SyslogIdentifier=copilot-api")
+    expect(out).toContain("Environment=SERVICE_NAME=copilot-api")
+  })
+
+  test("unknown flag prints usage and exits 2", async () => {
+    const fx = await makeReleaseFixture()
+    const localCleanup = fx.cleanup
+    cleanup = localCleanup
+    await seedSystemdTemplate(fx.releaseDir)
+    await $`chmod +x ${path.join(fx.scriptsDir, "install.sh")}`.quiet()
+
+    const proc = await $`${path.join(fx.scriptsDir, "install.sh")} --bogus`
+      .cwd(fx.releaseDir)
+      .quiet()
+      .nothrow()
+
+    expect(proc.exitCode).toBe(2)
+    expect(proc.stderr.toString()).toContain("Unknown option: --bogus")
+    expect(proc.stderr.toString()).toContain("Usage: install.sh")
+  })
 })
