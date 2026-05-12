@@ -68,6 +68,97 @@ if [ "$RENDER_ONLY" -eq 1 ]; then
   exit 0
 fi
 
-# --- Side-effecting install (implemented in Task 12) -----------------------
-echo "Error: full install not yet implemented (use --render-only for now)" >&2
-exit 1
+# --- Side-effecting install ------------------------------------------------
+
+require_systemd() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "Error: systemctl not found. This installer requires systemd." >&2
+    echo "On non-systemd hosts, use scripts/start.sh directly." >&2
+    exit 1
+  fi
+}
+
+unit_path() {
+  if [ "$USER_MODE" -eq 1 ]; then
+    echo "$HOME/.config/systemd/user/${SERVICE_NAME}.service"
+  else
+    echo "/etc/systemd/system/${SERVICE_NAME}.service"
+  fi
+}
+
+systemctl_cmd() {
+  if [ "$USER_MODE" -eq 1 ]; then
+    systemctl --user "$@"
+  else
+    systemctl "$@"
+  fi
+}
+
+ensure_env_file() {
+  local example="$RELEASE_DIR/.env.example"
+  local target="$RELEASE_DIR/.env"
+  if [ ! -f "$target" ]; then
+    if [ -f "$example" ]; then
+      cp "$example" "$target"
+      echo "Created $target from .env.example. Edit it to customize args, then:"
+      echo "  $(if [ "$USER_MODE" -eq 1 ]; then echo systemctl --user; else echo sudo systemctl; fi) restart $SERVICE_NAME"
+    else
+      # No example available; create a minimal placeholder so EnvironmentFile= works.
+      printf 'COPILOT_API_ARGS=""\n' > "$target"
+    fi
+  fi
+  chmod 600 "$target"
+}
+
+check_existing_schema() {
+  local target
+  target="$(unit_path)"
+  if [ ! -f "$target" ]; then return 0; fi
+  local existing
+  existing="$(grep -E '^# release-schema=' "$target" | head -n1 | cut -d= -f2)"
+  if [ -z "$existing" ]; then
+    echo "Notice: existing $target has no release-schema marker; replacing it."
+  elif [ "$existing" != "$RELEASE_SCHEMA_VERSION" ]; then
+    echo "Notice: existing $target has release-schema=$existing; this release is $RELEASE_SCHEMA_VERSION. Replacing."
+  fi
+}
+
+write_unit() {
+  local target
+  target="$(unit_path)"
+  mkdir -p "$(dirname "$target")"
+  render_unit > "$target.tmp"
+  mv "$target.tmp" "$target"
+  chmod 644 "$target"
+  echo "Installed unit at $target"
+}
+
+enable_linger_if_needed() {
+  if [ "$USER_MODE" -eq 1 ] && command -v loginctl >/dev/null 2>&1; then
+    loginctl enable-linger "$USER_NAME" 2>/dev/null || true
+  fi
+}
+
+require_systemd
+check_existing_schema
+ensure_env_file
+write_unit
+enable_linger_if_needed
+
+systemctl_cmd daemon-reload
+if [ "$NO_START" -eq 1 ]; then
+  systemctl_cmd enable "$SERVICE_NAME"
+  echo "Enabled $SERVICE_NAME (not started; --no-start was passed)."
+else
+  systemctl_cmd enable --now "$SERVICE_NAME"
+  echo "Enabled and started $SERVICE_NAME."
+fi
+
+cat <<EOF
+
+Useful commands:
+  systemctl status $SERVICE_NAME
+  $(if [ "$USER_MODE" -eq 1 ]; then echo systemctl --user; else echo sudo systemctl; fi) restart $SERVICE_NAME
+  journalctl -u $SERVICE_NAME -f
+  ls -lt $RELEASE_DIR/crashes/ | head
+EOF
