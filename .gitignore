@@ -22,6 +22,11 @@ copilot-api.config.json
 copilot-api.pid
 copilot-api.log
 
+# systemd keepalive runtime artifacts
+crashes/
+release/
+release/.env
+
 # Brainstorming visual companion sessions
 .superpowers/
 
