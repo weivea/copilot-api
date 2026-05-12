@@ -150,7 +150,12 @@ if [ "$NO_START" -eq 1 ]; then
   systemctl_cmd enable "$SERVICE_NAME"
   echo "Enabled $SERVICE_NAME (not started; --no-start was passed)."
 else
-  systemctl_cmd enable --now "$SERVICE_NAME"
+  systemctl_cmd enable "$SERVICE_NAME"
+  # `try-restart` is a no-op for inactive units (so first install proceeds to
+  # `start` below), and a graceful restart for active ones (so re-running
+  # install.sh after a unit-template change actually picks up the change).
+  systemctl_cmd try-restart "$SERVICE_NAME" || true
+  systemctl_cmd start "$SERVICE_NAME"
   echo "Enabled and started $SERVICE_NAME."
 fi
 

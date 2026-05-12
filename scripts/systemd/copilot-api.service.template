@@ -8,7 +8,11 @@ Wants=network-online.target
 Type=simple
 User=__USER__
 WorkingDirectory=__RELEASE_DIR__
-EnvironmentFile=__RELEASE_DIR__/.env
+# Leading `-` makes the file optional: if .env is deleted (e.g. during a
+# cleanup or a partial reinstall) the unit still loads and falls back to
+# whatever defaults the binary uses. install.sh always (re)creates .env
+# from .env.example, so this is just a safety net.
+EnvironmentFile=-__RELEASE_DIR__/.env
 ExecStart=/bin/sh -c '__RELEASE_DIR__/bin/copilot-api start $COPILOT_API_ARGS'
 ExecStopPost=__RELEASE_DIR__/scripts/crash-handler.sh
 

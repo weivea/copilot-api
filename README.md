@@ -655,54 +655,7 @@ bun run start
 
 日志输出到 `copilot-api.log`，PID 保存在 `copilot-api.pid`。
 
-### systemd 守护
-
-源码部署：
-
-`/etc/systemd/system/copilot-api.service`:
-
-```ini
-[Unit]
-Description=Copilot API Proxy
-After=network.target
-
-[Service]
-Type=simple
-User=your-username
-WorkingDirectory=/path/to/copilot-api
-ExecStart=/usr/bin/env bun run start
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-预编译 release 部署（无 bun 依赖，cwd 必须是 release 根目录，迁移文件与可选的 `copilot-api.config.json` 都按相对路径解析）：
-
-```ini
-[Unit]
-Description=Copilot API Proxy
-After=network.target
-
-[Service]
-Type=simple
-User=your-username
-WorkingDirectory=/path/to/release
-ExecStart=/path/to/release/bin/copilot-api start
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```sh
-sudo systemctl enable copilot-api
-sudo systemctl start copilot-api
-sudo systemctl status copilot-api
-journalctl -u copilot-api -f
-```
+> **生产部署看上面的"systemd 保活"小节**——release tarball 已经自带 `install.sh` 一键安装 systemd unit + crash 报告，不需要手写 unit 文件。本节的 `start.sh` 只在没有 systemd 的环境里使用。
 
 ## 常见用法 / Tips
 

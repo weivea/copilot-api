@@ -43,7 +43,7 @@ describe("install.sh", () => {
     expect(out).toContain("# release-schema=1")
     expect(out).toContain("User=testuser")
     expect(out).toContain(`WorkingDirectory=${fx.releaseDir}`)
-    expect(out).toContain(`EnvironmentFile=${fx.releaseDir}/.env`)
+    expect(out).toContain(`EnvironmentFile=-${fx.releaseDir}/.env`)
     expect(out).toContain(
       `ExecStart=/bin/sh -c '${fx.releaseDir}/bin/copilot-api start $COPILOT_API_ARGS'`,
     )
