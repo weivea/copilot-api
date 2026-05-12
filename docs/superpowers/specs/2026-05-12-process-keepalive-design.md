@@ -21,21 +21,21 @@
 
 ## Decisions Locked In
 
-| Decision | Choice |
-|---|---|
-| Init system | Linux + systemd (with root/sudo) |
-| Integration style | Ship `install.sh` in release tar, one-shot installs a systemd unit |
-| Crash capture | systemd journald + `ExecStopPost` script writes `crashes/<ts>.txt` |
-| Restart policy | `Restart=on-failure`, `RestartSec=5s`, no `StartLimitBurst` |
-| Run identity | Current user, in-place release directory (no dedicated user, no `/opt`) |
-| Config delivery | `.env` + systemd `EnvironmentFile=` |
-| Upgrade strategy | **Plan A — in-place overwrite + `systemctl restart`** |
+| Decision          | Choice                                                                  |
+| ----------------- | ----------------------------------------------------------------------- |
+| Init system       | Linux + systemd (with root/sudo)                                        |
+| Integration style | Ship `install.sh` in release tar, one-shot installs a systemd unit      |
+| Crash capture     | systemd journald + `ExecStopPost` script writes `crashes/<ts>.txt`      |
+| Restart policy    | `Restart=on-failure`, `RestartSec=5s`, no `StartLimitBurst`             |
+| Run identity      | Current user, in-place release directory (no dedicated user, no `/opt`) |
+| Config delivery   | `.env` + systemd `EnvironmentFile=`                                     |
+| Upgrade strategy  | **Plan A — in-place overwrite + `systemctl restart`**                   |
 
 ## § 1 Architecture Overview
 
 New artifacts shipped inside the release tarball:
 
-```
+```text
 release/
   bin/copilot-api
   dist/public/
@@ -52,7 +52,7 @@ release/
 
 Runtime topology after `install.sh`:
 
-```
+```text
 systemd
   └── copilot-api.service
         ├── EnvironmentFile=<release>/.env
