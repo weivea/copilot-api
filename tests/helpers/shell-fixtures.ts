@@ -21,7 +21,12 @@ export async function makeReleaseFixture(): Promise<{
   await mkdir(path.join(releaseDir, "bin"), { recursive: true })
 
   // Copy the real shell scripts so tests run against the actual code.
-  for (const name of ["crash-handler.sh", "install.sh", "uninstall.sh"]) {
+  for (const name of [
+    "crash-handler.sh",
+    "install.sh",
+    "uninstall.sh",
+    "restart-scheduler.sh",
+  ]) {
     const src = path.join(ROOT, "scripts", name)
     const dst = path.join(scriptsDir, name)
     try {
