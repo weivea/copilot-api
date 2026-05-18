@@ -178,6 +178,23 @@ describe("authMiddleware (multi)", () => {
     expect(await res.json()).toEqual({ ok: true })
   })
 
+  test("/token: admin DB token gets 403 permission_denied", async () => {
+    const tokenPlain =
+      "cpk-admintok0000000000000000000000000000000000000000000000000000000"
+    await createAuthToken({
+      name: "admin-u",
+      tokenHash: hashToken(tokenPlain),
+      tokenPrefix: "cpk-admin...0000",
+      isAdmin: true,
+    })
+    const res = await makeApp().request("/token", {
+      headers: { "x-api-key": tokenPlain },
+    })
+    expect(res.status).toBe(403)
+    const body = (await res.json()) as { error: { type: string } }
+    expect(body.error.type).toBe("permission_denied")
+  })
+
   test("/modelsearch (SPA-like path) is NOT protected by /models prefix", async () => {
     const res = await makeApp().request("/modelsearch")
     expect(res.status).toBe(200)
