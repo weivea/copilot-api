@@ -195,6 +195,22 @@ describe("authMiddleware (multi)", () => {
     expect(body.error.type).toBe("permission_denied")
   })
 
+  test("/token: user DB token gets 403 permission_denied", async () => {
+    const tokenPlain =
+      "cpk-usertok00000000000000000000000000000000000000000000000000000000"
+    await createAuthToken({
+      name: "regular-u",
+      tokenHash: hashToken(tokenPlain),
+      tokenPrefix: "cpk-user...0000",
+    })
+    const res = await makeApp().request("/token", {
+      headers: { "x-api-key": tokenPlain },
+    })
+    expect(res.status).toBe(403)
+    const body = (await res.json()) as { error: { type: string } }
+    expect(body.error.type).toBe("permission_denied")
+  })
+
   test("/modelsearch (SPA-like path) is NOT protected by /models prefix", async () => {
     const res = await makeApp().request("/modelsearch")
     expect(res.status).toBe(200)
