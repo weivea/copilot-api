@@ -2,7 +2,10 @@ import type { Context, MiddlewareHandler } from "hono"
 
 import crypto from "node:crypto"
 
-import { findAuthTokenByHash } from "~/db/queries/auth-tokens"
+import {
+  type AuthTokenRow,
+  findAuthTokenByHash,
+} from "~/db/queries/auth-tokens"
 import { countRequestsSince, sumTokensSince } from "~/db/queries/request-logs"
 import { latestUsageReset } from "~/db/queries/usage-resets"
 import { hashToken } from "~/lib/auth-token-utils"
@@ -60,7 +63,7 @@ function isProtectedPath(path: string): boolean {
 // Returns a 4xx Response if a DB-token limit is hit, otherwise undefined.
 async function enforceDbTokenLimits(
   c: Context,
-  row: NonNullable<Awaited<ReturnType<typeof findAuthTokenByHash>>>,
+  row: AuthTokenRow,
 ): Promise<Response | undefined> {
   // RPM
   if (row.rpmLimit !== null && row.rpmLimit > 0) {
