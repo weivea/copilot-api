@@ -1,0 +1,34 @@
+# release-schema=1
+[Unit]
+Description=Copilot API scheduled restart (daily)
+After=__SERVICE_NAME__.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__RELEASE_DIR__
+# Leading `-` makes the env file optional, matching the main unit.
+EnvironmentFile=-__RELEASE_DIR__/.env
+Environment=SERVICE_NAME=__SERVICE_NAME__
+Environment=USER_MODE=__USER_MODE__
+ExecStart=__RELEASE_DIR__/scripts/restart-scheduler.sh
+
+# Each scheduler iteration runs once and exits cleanly (exit 0) after
+# triggering a restart. Restart=always cycles us back so the script
+# re-reads .env and computes the next target. RestartSec=5s bounds the
+# retry loop in the bad-config case (exit 1).
+Restart=always
+RestartSec=5s
+StartLimitBurst=0
+StartLimitIntervalSec=0
+
+# Separate log file to keep main-service logs uncluttered.
+StandardOutput=append:__RELEASE_DIR__/copilot-api-restart.log
+StandardError=append:__RELEASE_DIR__/copilot-api-restart.log
+SyslogIdentifier=__SERVICE_NAME__-restart
+
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
