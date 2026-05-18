@@ -170,6 +170,14 @@ describe("authMiddleware (multi)", () => {
     expect(res.status).toBe(401)
   })
 
+  test("/token: super admin gets 200", async () => {
+    const res = await makeApp().request("/token", {
+      headers: { Authorization: `Bearer ${SUPER}` },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+  })
+
   test("/modelsearch (SPA-like path) is NOT protected by /models prefix", async () => {
     const res = await makeApp().request("/modelsearch")
     expect(res.status).toBe(200)
