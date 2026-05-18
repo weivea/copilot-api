@@ -46,6 +46,9 @@ const PROTECTED_PREFIXES = [
   "/embeddings",
   "/v1/",
 ]
+// Endpoints that ONLY the super admin may call. Must also appear in
+// PROTECTED_EXACT (or a matching prefix) so the auth gate runs first.
+const SUPER_ONLY_EXACT = new Set(["/token"])
 
 function isProtectedPath(path: string): boolean {
   if (PROTECTED_EXACT.has(path)) return true
@@ -75,7 +78,8 @@ export function authMiddleware(): MiddlewareHandler {
       )
     }
 
-    // Super admin first
+    // Super admin first. MUST stay before the SUPER_ONLY gate below;
+    // otherwise the super admin itself would be rejected.
     if (
       state.superAdminTokenHash !== undefined
       && constantTimeEqual(hashToken(presented), state.superAdminTokenHash)
@@ -84,6 +88,16 @@ export function authMiddleware(): MiddlewareHandler {
         c.set("authTokenId", state.superAdminTokenId)
       }
       return next()
+    }
+
+    // Super-only endpoints: reject any non-super caller before doing a DB
+    // lookup or running rate-limit / quota checks. This also keeps these
+    // denied requests out of usageRecorder downstream.
+    if (SUPER_ONLY_EXACT.has(c.req.path)) {
+      return c.json(
+        jsonError("permission_denied", "Super admin required."),
+        403,
+      )
     }
 
     // DB token
