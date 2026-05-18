@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from "hono"
+import type { Context, MiddlewareHandler } from "hono"
 
 import crypto from "node:crypto"
 
@@ -57,6 +57,53 @@ function isProtectedPath(path: string): boolean {
   )
 }
 
+// Returns a 4xx Response if a DB-token limit is hit, otherwise undefined.
+async function enforceDbTokenLimits(
+  c: Context,
+  row: NonNullable<Awaited<ReturnType<typeof findAuthTokenByHash>>>,
+): Promise<Response | undefined> {
+  // RPM
+  if (row.rpmLimit !== null && row.rpmLimit > 0) {
+    const since = Date.now() - 60_000
+    const count = await countRequestsSince(row.id, since)
+    if (count >= row.rpmLimit) {
+      return c.json(
+        jsonError("rate_limit_exceeded", "Per-minute request limit hit.", {
+          retry_after_ms: 60_000,
+        }),
+        429,
+      )
+    }
+  }
+
+  // Monthly
+  if (row.monthlyTokenLimit !== null && row.monthlyTokenLimit > 0) {
+    const lastReset = await latestUsageReset(row.id, "monthly")
+    const since = Math.max(startOfCurrentMonthMs(), lastReset)
+    const used = await sumTokensSince(row.id, since)
+    if (used >= row.monthlyTokenLimit) {
+      return c.json(
+        jsonError("monthly_quota_exceeded", "Monthly token quota exceeded."),
+        429,
+      )
+    }
+  }
+
+  // Lifetime
+  if (
+    row.lifetimeTokenLimit !== null
+    && row.lifetimeTokenLimit > 0
+    && row.lifetimeTokenUsed >= row.lifetimeTokenLimit
+  ) {
+    return c.json(
+      jsonError("account_quota_exhausted", "Lifetime token quota exhausted."),
+      403,
+    )
+  }
+
+  return undefined
+}
+
 export function authMiddleware(): MiddlewareHandler {
   return async (c, next) => {
     if (!state.authEnabled) return next()
@@ -106,44 +153,10 @@ export function authMiddleware(): MiddlewareHandler {
       return c.json(jsonError("auth_error", "Invalid auth token."), 401)
     }
 
-    // RPM
-    if (row.rpmLimit !== null && row.rpmLimit > 0) {
-      const since = Date.now() - 60_000
-      const count = await countRequestsSince(row.id, since)
-      if (count >= row.rpmLimit) {
-        return c.json(
-          jsonError("rate_limit_exceeded", "Per-minute request limit hit.", {
-            retry_after_ms: 60_000,
-          }),
-          429,
-        )
-      }
-    }
-
-    // Monthly
-    if (row.monthlyTokenLimit !== null && row.monthlyTokenLimit > 0) {
-      const lastReset = await latestUsageReset(row.id, "monthly")
-      const since = Math.max(startOfCurrentMonthMs(), lastReset)
-      const used = await sumTokensSince(row.id, since)
-      if (used >= row.monthlyTokenLimit) {
-        return c.json(
-          jsonError("monthly_quota_exceeded", "Monthly token quota exceeded."),
-          429,
-        )
-      }
-    }
-
-    // Lifetime
-    if (
-      row.lifetimeTokenLimit !== null
-      && row.lifetimeTokenLimit > 0
-      && row.lifetimeTokenUsed >= row.lifetimeTokenLimit
-    ) {
-      return c.json(
-        jsonError("account_quota_exhausted", "Lifetime token quota exhausted."),
-        403,
-      )
-    }
+    // RPM / Monthly / Lifetime checks (extracted to keep this arrow's
+    // cyclomatic complexity within lint limits).
+    const limitResponse = await enforceDbTokenLimits(c, row)
+    if (limitResponse) return limitResponse
 
     c.set("authTokenId", row.id)
     return next()
