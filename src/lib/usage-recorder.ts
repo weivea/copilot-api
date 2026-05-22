@@ -10,6 +10,7 @@ interface PendingUsage {
   promptTokens?: number | null
   completionTokens?: number | null
   totalTokens?: number | null
+  costNanoAiu?: number | null
   model?: string | null
   recorded?: boolean
   // When false, the request is logged for audit but its tokens are NOT
@@ -33,6 +34,8 @@ const TRACKED_ENDPOINT_PREFIXES = [
   "/v1/messages", // covers /v1/messages and /v1/messages/count_tokens
   "/v1/embeddings",
   "/embeddings",
+  "/v1/responses",
+  "/responses",
 ] as const
 
 function isTrackedEndpoint(path: string): boolean {
@@ -77,6 +80,7 @@ async function writeLogInner(args: WriteLogArgs): Promise<void> {
       promptTokens: pending.promptTokens ?? null,
       completionTokens: pending.completionTokens ?? null,
       totalTokens: pending.totalTokens ?? null,
+      costNanoAiu: pending.costNanoAiu ?? null,
       statusCode: status,
       latencyMs: ts - startedAt,
     })
@@ -122,7 +126,12 @@ export function recordUsage(
   c: Context,
   data: Pick<
     PendingUsage,
-    "promptTokens" | "completionTokens" | "totalTokens" | "model" | "billable"
+    | "promptTokens"
+    | "completionTokens"
+    | "totalTokens"
+    | "costNanoAiu"
+    | "model"
+    | "billable"
   >,
 ): void {
   const p = getPending(c)
@@ -130,6 +139,7 @@ export function recordUsage(
   if (data.completionTokens !== undefined)
     p.completionTokens = data.completionTokens
   if (data.totalTokens !== undefined) p.totalTokens = data.totalTokens
+  if (data.costNanoAiu !== undefined) p.costNanoAiu = data.costNanoAiu
   if (data.model !== undefined) p.model = data.model
   if (data.billable !== undefined) p.billable = data.billable
 }
