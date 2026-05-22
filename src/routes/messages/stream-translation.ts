@@ -1,6 +1,7 @@
 import { type ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
 
 import {
+  type AnthropicCopilotInfoEvent,
   type AnthropicStreamEventData,
   type AnthropicStreamState,
 } from "./anthropic-types"
@@ -167,5 +168,19 @@ export function translateErrorToAnthropicErrorEvent(): AnthropicStreamEventData 
       type: "api_error",
       message: "An unexpected error occurred during streaming.",
     },
+  }
+}
+
+/**
+ * Build the synthesized `copilot_info` event payload from cached upstream
+ * info_messages. Returns null when there is nothing to send.
+ */
+export function buildCopilotInfoEvent(
+  state: AnthropicStreamState,
+): AnthropicCopilotInfoEvent | null {
+  if (!state.copilotInfoMessages?.length) return null
+  return {
+    type: "copilot_info",
+    messages: state.copilotInfoMessages,
   }
 }

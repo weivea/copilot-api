@@ -4,6 +4,10 @@ import consola from "consola"
 import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import {
+  captureInfoMessages,
+  pickCostNanoAiu,
+} from "~/lib/copilot-info-messages"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
@@ -22,7 +26,10 @@ import {
   translateToAnthropic,
   translateToOpenAI,
 } from "./non-stream-translation"
-import { translateChunkToAnthropicEvents } from "./stream-translation"
+import {
+  buildCopilotInfoEvent,
+  translateChunkToAnthropicEvents,
+} from "./stream-translation"
 import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 export async function handleCompletion(c: Context) {
@@ -68,11 +75,16 @@ export async function handleCompletion(c: Context) {
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
+    captureInfoMessages(response, {
+      endpoint: "/v1/messages",
+      model: openAIPayload.model,
+    })
     recordUsage(c, {
       model: openAIPayload.model,
       promptTokens: response.usage?.prompt_tokens ?? null,
       completionTokens: response.usage?.completion_tokens ?? null,
       totalTokens: response.usage?.total_tokens ?? null,
+      costNanoAiu: pickCostNanoAiu(response),
     })
     return c.json(anthropicResponse)
   }
@@ -102,6 +114,34 @@ interface RunAnthropicStreamCtx {
   upstreamController: AbortController
 }
 
+interface StreamMeta {
+  state: AnthropicStreamState
+  cost: number | null
+}
+
+function captureChunkMetadata(
+  chunk: ChatCompletionChunk,
+  meta: StreamMeta,
+  model: string,
+): void {
+  if (chunk.copilot_info_messages?.length) {
+    meta.state.copilotInfoMessages = chunk.copilot_info_messages
+    captureInfoMessages(chunk, { endpoint: "/v1/messages", model })
+  }
+  const cc = pickCostNanoAiu(chunk)
+  if (cc !== null) meta.cost = cc
+}
+
+async function emitCopilotInfoIfAny(
+  state: AnthropicStreamState,
+  writeSafe: (event: string, data: unknown) => Promise<void>,
+): Promise<void> {
+  const copilotInfo = buildCopilotInfoEvent(state)
+  if (copilotInfo) {
+    await writeSafe(copilotInfo.type, copilotInfo)
+  }
+}
+
 async function runAnthropicStream(
   stream: SSEStreamingApi,
   ctx: RunAnthropicStreamCtx,
@@ -113,6 +153,7 @@ async function runAnthropicStream(
     contentBlockOpen: false,
     toolCalls: {},
   }
+  const meta: StreamMeta = { state: streamState, cost: null }
 
   const abortState = { aborted: false }
   // Idempotency guard: both the catch path and Hono's onError can call the
@@ -169,6 +210,7 @@ async function runAnthropicStream(
         usage.total = u.total_tokens ?? usage.total
         usage.cached = u.prompt_tokens_details?.cached_tokens ?? usage.cached
       }
+      captureChunkMetadata(chunk, meta, model)
       const events = translateChunkToAnthropicEvents(chunk, streamState)
 
       for (const event of events) {
@@ -222,6 +264,7 @@ async function runAnthropicStream(
         })
         streamState.contentBlockOpen = false
       }
+      await emitCopilotInfoIfAny(streamState, writeSafe)
       const inputTokens = Math.max(0, usage.prompt - usage.cached)
       await writeSafe("message_delta", {
         type: "message_delta",
@@ -249,6 +292,7 @@ async function runAnthropicStream(
       promptTokens: usage.prompt || null,
       completionTokens: usage.completion || null,
       totalTokens: usage.total || null,
+      costNanoAiu: meta.cost,
     })
     flushUsage(c)
   }
