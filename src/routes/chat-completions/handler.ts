@@ -4,6 +4,10 @@ import consola from "consola"
 import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import {
+  captureInfoMessages,
+  pickCostNanoAiu,
+} from "~/lib/copilot-info-messages"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
@@ -11,6 +15,7 @@ import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
 import { isNullish, formatErrorWithCause } from "~/lib/utils"
 import {
   createChatCompletions,
+  type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
@@ -202,11 +207,16 @@ export async function handleCompletion(c: Context) {
   }
 
   if (isNonStreaming(response)) {
+    captureInfoMessages(response, {
+      endpoint: "/v1/chat/completions",
+      model: response.model,
+    })
     recordUsage(c, {
       model: payload.model,
       promptTokens: response.usage?.prompt_tokens ?? null,
       completionTokens: response.usage?.completion_tokens ?? null,
       totalTokens: response.usage?.total_tokens ?? null,
+      costNanoAiu: pickCostNanoAiu(response),
     })
     return c.json(response)
   }
@@ -247,6 +257,7 @@ async function pipeOpenAIStream(
 ): Promise<void> {
   const { response, usage, c, model, upstreamController } = ctx
   const abortState = { aborted: false }
+  let costNanoAiu: number | null = null
   // Idempotency guard: protect the post-error writes from being entered twice
   // if the catch path and a subsequent fault both fire.
   const finalizerState = { ran: false }
@@ -270,19 +281,18 @@ async function pipeOpenAIStream(
       if (chunk.data === undefined) continue
       if (chunk.data && chunk.data !== "[DONE]") {
         try {
-          const parsed = JSON.parse(chunk.data) as {
-            usage?: {
-              prompt_tokens?: number
-              completion_tokens?: number
-              total_tokens?: number
-            }
-          }
+          const parsed = JSON.parse(chunk.data) as ChatCompletionChunk
           if (parsed.usage) {
             usage.prompt = parsed.usage.prompt_tokens ?? usage.prompt
             usage.completion =
               parsed.usage.completion_tokens ?? usage.completion
             usage.total = parsed.usage.total_tokens ?? usage.total
           }
+          captureInfoMessages(parsed, {
+            endpoint: "/v1/chat/completions",
+            model: parsed.model,
+          })
+          costNanoAiu = pickCostNanoAiu(parsed) ?? costNanoAiu
         } catch {
           /* not json */
         }
@@ -316,6 +326,7 @@ async function pipeOpenAIStream(
       promptTokens: usage.prompt || null,
       completionTokens: usage.completion || null,
       totalTokens: usage.total || null,
+      costNanoAiu,
     })
     flushUsage(c)
   }
