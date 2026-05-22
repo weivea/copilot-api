@@ -162,7 +162,7 @@ export interface ResponsesResponse {
   previous_response_id?: string | null
   prompt_cache_retention?: string
   safety_identifier?: string
-  service_tier?: "default" | string
+  service_tier?: "default" | (string & {})
   temperature?: number
   top_p?: number
   truncation?: "auto" | "disabled"

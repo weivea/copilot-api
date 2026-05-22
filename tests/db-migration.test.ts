@@ -10,7 +10,10 @@ import { insertRequestLog } from "../src/db/queries/request-logs"
 
 const cleanup: Array<() => void> = []
 afterEach(() => {
-  while (cleanup.length > 0) cleanup.pop()!()
+  while (cleanup.length > 0) {
+    const fn = cleanup.pop()
+    if (fn) fn()
+  }
 })
 
 function tmpDbPath(): string {

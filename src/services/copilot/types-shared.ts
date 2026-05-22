@@ -7,7 +7,14 @@ export interface CopilotUsage {
     batch_size: number
     cost_per_batch: number
     token_count: number
-    token_type: "input" | "cache_read" | "cache_write" | "output" | string
+    // Open string union: known codes give autocomplete hints, unknown
+    // ones still type-check. `string & {}` defeats literal subsumption.
+    token_type:
+      | "input"
+      | "cache_read"
+      | "cache_write"
+      | "output"
+      | (string & {})
   }>
   total_nano_aiu: number
 }
@@ -18,6 +25,6 @@ export interface CopilotUsage {
  * Open string union so unknown codes still type-check.
  */
 export interface CopilotInfoMessage {
-  code: "model_pending_deprecation" | string
+  code: "model_pending_deprecation" | (string & {})
   message: string
 }
