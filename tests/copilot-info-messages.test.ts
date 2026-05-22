@@ -8,7 +8,7 @@ import {
 
 describe("captureInfoMessages", () => {
   test("undefined source returns undefined and does not log", () => {
-    const warn = mock(() => {})
+    const warn = mock((..._args: Array<unknown>) => {})
     const orig = consola.warn
     consola.warn = warn as never
 
@@ -20,7 +20,7 @@ describe("captureInfoMessages", () => {
   })
 
   test("empty array returns undefined and does not log", () => {
-    const warn = mock(() => {})
+    const warn = mock((..._args: Array<unknown>) => {})
     const orig = consola.warn
     consola.warn = warn as never
 
@@ -35,7 +35,7 @@ describe("captureInfoMessages", () => {
   })
 
   test("known code logs via warn and returns the array", () => {
-    const warn = mock(() => {})
+    const warn = mock((..._args: Array<unknown>) => {})
     const orig = consola.warn
     consola.warn = warn as never
 
@@ -58,8 +58,8 @@ describe("captureInfoMessages", () => {
   })
 
   test("unknown code logs via info, not warn", () => {
-    const warn = mock(() => {})
-    const info = mock(() => {})
+    const warn = mock((..._args: Array<unknown>) => {})
+    const info = mock((..._args: Array<unknown>) => {})
     const origW = consola.warn
     const origI = consola.info
     consola.warn = warn as never
@@ -78,7 +78,7 @@ describe("captureInfoMessages", () => {
   })
 
   test("idempotent: same source object logged only once", () => {
-    const warn = mock(() => {})
+    const warn = mock((..._args: Array<unknown>) => {})
     const orig = consola.warn
     consola.warn = warn as never
 
