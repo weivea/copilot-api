@@ -17,11 +17,10 @@ import {
   createResponses,
   type ResponsesResponse,
 } from "~/services/copilot/create-responses"
-
 import type {
   CopilotInfoMessage,
   CopilotUsage,
-} from "./types-shared"
+} from "~/services/copilot/types-shared"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
