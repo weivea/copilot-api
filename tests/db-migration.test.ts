@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import * as migrator from "drizzle-orm/bun-sqlite/migrator"
 import fs from "node:fs"
 import os from "node:os"
@@ -10,7 +10,7 @@ import { insertRequestLog } from "../src/db/queries/request-logs"
 
 const cleanup: Array<() => void> = []
 afterEach(() => {
-  while (cleanup.length) cleanup.pop()!()
+  while (cleanup.length > 0) cleanup.pop()!()
 })
 
 function tmpDbPath(): string {

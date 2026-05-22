@@ -1,6 +1,11 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
+import type {
+  CopilotInfoMessage,
+  CopilotUsage,
+} from "~/services/copilot/types-shared"
+
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import {
@@ -17,10 +22,6 @@ import {
   createResponses,
   type ResponsesResponse,
 } from "~/services/copilot/create-responses"
-import type {
-  CopilotInfoMessage,
-  CopilotUsage,
-} from "~/services/copilot/types-shared"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,

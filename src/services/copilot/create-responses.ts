@@ -1,13 +1,14 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
-import { HTTPError } from "~/lib/error"
-import { state } from "~/lib/state"
 import type {
   CopilotInfoMessage,
   CopilotUsage,
 } from "~/services/copilot/types-shared"
+
+import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { HTTPError } from "~/lib/error"
+import { state } from "~/lib/state"
 
 function isMessageItem(item: ResponsesInputItem): item is ResponsesMessageItem {
   return item.type === undefined || item.type === "message"

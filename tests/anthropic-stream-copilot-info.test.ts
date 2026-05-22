@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { AnthropicStreamState } from "~/routes/messages/anthropic-types"
+
 import { buildCopilotInfoEvent } from "~/routes/messages/stream-translation"
 
 /**
