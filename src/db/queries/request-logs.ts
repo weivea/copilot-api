@@ -85,6 +85,7 @@ export interface RecentLog {
   promptTokens: number | null
   completionTokens: number | null
   totalTokens: number | null
+  costNanoAiu: number | null
   statusCode: number
   latencyMs: number | null
 }

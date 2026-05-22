@@ -93,4 +93,60 @@ describe("usage-recorder", () => {
     const logs = await recentLogs({ tokenId: id, limit: 10 })
     expect(logs[0]?.statusCode).toBe(500)
   })
+
+  test("records cost_nano_aiu when supplied to recordUsage", async () => {
+    const id = await createAuthToken({
+      name: "u",
+      tokenHash: "h2",
+      tokenPrefix: "p2",
+    })
+    const app = new Hono()
+    app.use(async (c, next) => {
+      c.set("authTokenId", id)
+      await next()
+    })
+    app.use(usageRecorder())
+    app.post("/v1/chat/completions", async (c) => {
+      await recordUsage(c, {
+        promptTokens: 14,
+        completionTokens: 9,
+        totalTokens: 23,
+        costNanoAiu: 1_500_000,
+        model: "gpt-4o-mini",
+      })
+      return c.json({ ok: true })
+    })
+    const res = await app.request("/v1/chat/completions", { method: "POST" })
+    expect(res.status).toBe(200)
+    const logs = await recentLogs({ tokenId: id, limit: 1 })
+    expect(logs[0]?.costNanoAiu).toBe(1_500_000)
+  })
+
+  test("/v1/responses is tracked as a billable endpoint", async () => {
+    const id = await createAuthToken({
+      name: "u",
+      tokenHash: "h3",
+      tokenPrefix: "p3",
+    })
+    const app = new Hono()
+    app.use(async (c, next) => {
+      c.set("authTokenId", id)
+      await next()
+    })
+    app.use(usageRecorder())
+    app.post("/v1/responses", async (c) => {
+      await recordUsage(c, {
+        promptTokens: 5,
+        totalTokens: 12,
+        costNanoAiu: 999_000,
+      })
+      return c.json({ ok: true })
+    })
+    const res = await app.request("/v1/responses", { method: "POST" })
+    expect(res.status).toBe(200)
+    const logs = await recentLogs({ tokenId: id, limit: 1 })
+    expect(logs).toHaveLength(1)
+    expect(logs[0]?.endpoint).toBe("/v1/responses")
+    expect(logs[0]?.costNanoAiu).toBe(999_000)
+  })
 })
