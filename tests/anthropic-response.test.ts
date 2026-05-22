@@ -189,6 +189,55 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation", () => {
     expect(isValidAnthropicResponse(anthropicResponse)).toBe(true)
     expect(anthropicResponse.stop_reason).toBe("max_tokens")
   })
+
+  test("does not add copilot_info_messages when upstream omits it", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-x",
+      model: "claude-sonnet-4.5",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "hi" },
+          logprobs: null,
+          finish_reason: "stop",
+        },
+      ],
+    }
+    const out = translateToAnthropic(openAIResponse)
+    expect(out).not.toHaveProperty("copilot_info_messages")
+  })
+
+  test("mounts copilot_info_messages verbatim when present", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-x",
+      model: "claude-sonnet-4.5",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "hi" },
+          logprobs: null,
+          finish_reason: "stop",
+        },
+      ],
+      copilot_info_messages: [
+        {
+          code: "model_pending_deprecation",
+          message: "Sonnet 4 deprecates soon",
+        },
+      ],
+    }
+    const out = translateToAnthropic(
+      openAIResponse,
+    ) as unknown as typeof openAIResponse & {
+      copilot_info_messages?: unknown
+    }
+    expect(out.copilot_info_messages).toEqual([
+      {
+        code: "model_pending_deprecation",
+        message: "Sonnet 4 deprecates soon",
+      },
+    ])
+  })
 })
 
 describe("OpenAI to Anthropic Streaming Response Translation", () => {
