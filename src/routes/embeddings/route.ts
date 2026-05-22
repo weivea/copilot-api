@@ -14,15 +14,11 @@ embeddingRoutes.post("/", async (c) => {
     const payload = await c.req.json<EmbeddingRequest>()
     const response = await createEmbeddings(payload)
 
-    const anyResp = response as {
-      model?: string
-      usage?: { prompt_tokens?: number; total_tokens?: number }
-    }
     recordUsage(c, {
-      model: anyResp.model ?? (payload as { model?: string }).model ?? null,
-      promptTokens: anyResp.usage?.prompt_tokens ?? null,
+      model: response.model ?? payload.model ?? null,
+      promptTokens: response.usage?.prompt_tokens ?? null,
       completionTokens: null,
-      totalTokens: anyResp.usage?.total_tokens ?? null,
+      totalTokens: response.usage?.total_tokens ?? null,
     })
 
     return c.json(response)

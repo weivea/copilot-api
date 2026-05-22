@@ -32,9 +32,9 @@ export interface Embedding {
 }
 
 export interface EmbeddingResponse {
-  object: string
+  object?: string
   data: Array<Embedding>
-  model: string
+  model?: string
   usage: {
     prompt_tokens: number
     total_tokens: number
