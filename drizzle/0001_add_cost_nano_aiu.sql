@@ -1,0 +1,1 @@
+ALTER TABLE `request_logs` ADD `cost_nano_aiu` integer;

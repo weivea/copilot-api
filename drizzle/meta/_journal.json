@@ -8,6 +8,13 @@
       "when": 1776932739466,
       "tag": "0000_open_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1779432372129,
+      "tag": "0001_add_cost_nano_aiu",
+      "breakpoints": true
     }
   ]
 }

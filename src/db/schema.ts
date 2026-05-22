@@ -42,6 +42,7 @@ export const requestLogs = sqliteTable(
     totalTokens: integer("total_tokens"),
     statusCode: integer("status_code").notNull(),
     latencyMs: integer("latency_ms"),
+    costNanoAiu: integer("cost_nano_aiu"),
   },
   (t) => ({
     tokenTsIdx: index("request_logs_token_ts_idx").on(
