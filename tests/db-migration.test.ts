@@ -5,7 +5,11 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-import { initDb, _setDbForTest } from "../src/db/client"
+import {
+  initDb,
+  _setDbForTest,
+  resolveMigrationsFolderFor,
+} from "../src/db/client"
 import { insertRequestLog } from "../src/db/queries/request-logs"
 
 const cleanup: Array<() => void> = []
@@ -80,5 +84,101 @@ describe("initDb fail-fast", () => {
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+describe("resolveMigrationsFolder (via initDb)", () => {
+  test("works from an unrelated cwd (mirrors packaged binary path)", () => {
+    // When Bun --compile produces a single-file binary, `import.meta.dir`
+    // resolves to /$bunfs/root/ (the embedded virtual fs), so initDb must
+    // be able to find drizzle/ via process.execPath or cwd instead. Simulate
+    // a hostile cwd by chdir'ing into /tmp before calling initDb. The repo's
+    // own drizzle/ folder is reachable via `<import.meta.dir>/../../drizzle`,
+    // which is the dev-fallback candidate (3rd in the list), so this also
+    // proves the multi-candidate resolver doesn't bail on the first miss.
+    const originalCwd = process.cwd()
+    const isolatedCwd = fs.mkdtempSync(
+      path.join(os.tmpdir(), "copilot-api-cwd-test-"),
+    )
+    cleanup.push(() => {
+      process.chdir(originalCwd)
+      fs.rmSync(isolatedCwd, { recursive: true, force: true })
+    })
+    process.chdir(isolatedCwd)
+
+    const p = tmpDbPath()
+    expect(() => initDb(p)).not.toThrow()
+
+    const sqlite = new Database(p)
+    const cols = sqlite
+      .query(`PRAGMA table_info(request_logs)`)
+      .all() as Array<{ name: string }>
+    expect(cols.map((c) => c.name)).toContain("cost_nano_aiu")
+    sqlite.close()
+  })
+})
+
+describe("resolveMigrationsFolderFor (pure)", () => {
+  test("prefers execPath-relative candidate when packaged layout matches", () => {
+    // Simulates the packaged binary case:
+    //   /opt/copilot-api/release/bin/copilot-api  ← execPath
+    //   /opt/copilot-api/release/drizzle/...       ← what we want to find
+    // metaDir is the /$bunfs/root/ virtual fs (everything under it is junk).
+    // cwd is some random place (doesn't matter for this case).
+    const seen: Array<string> = []
+    const result = resolveMigrationsFolderFor({
+      execPath: "/opt/copilot-api/release/bin/copilot-api",
+      cwd: "/var/run/systemd",
+      metaDir: "/$bunfs/root",
+      exists: (p) => {
+        seen.push(p)
+        return p === "/opt/copilot-api/release/drizzle/meta/_journal.json"
+      },
+    })
+    expect(result).toBe("/opt/copilot-api/release/drizzle")
+    // Probed execPath candidate first (and stopped there).
+    expect(seen[0]).toBe("/opt/copilot-api/release/drizzle/meta/_journal.json")
+    expect(seen).toHaveLength(1)
+  })
+
+  test("falls back to cwd-relative when execPath candidate is missing", () => {
+    const result = resolveMigrationsFolderFor({
+      execPath: "/$bunfs/root/copilot-api",
+      cwd: "/opt/copilot-api/release",
+      metaDir: "/$bunfs/root",
+      exists: (p) =>
+        p === "/opt/copilot-api/release/drizzle/meta/_journal.json",
+    })
+    expect(result).toBe("/opt/copilot-api/release/drizzle")
+  })
+
+  test("falls back to metaDir-relative as last resort (dev)", () => {
+    const result = resolveMigrationsFolderFor({
+      execPath: "/some/bun",
+      cwd: "/tmp/random",
+      metaDir: "/repo/src/db",
+      exists: (p) => p === "/repo/drizzle/meta/_journal.json",
+    })
+    expect(result).toBe("/repo/drizzle")
+  })
+
+  test("returns the first candidate when nothing exists (so the error names the most-likely path)", () => {
+    const result = resolveMigrationsFolderFor({
+      execPath: "/opt/copilot-api/release/bin/copilot-api",
+      cwd: "/var/run/systemd",
+      metaDir: "/$bunfs/root",
+      exists: () => false,
+    })
+    expect(result).toBe("/opt/copilot-api/release/drizzle")
+  })
+
+  test("skips execPath candidate when execPath is undefined", () => {
+    const result = resolveMigrationsFolderFor({
+      cwd: "/opt/copilot-api/release",
+      metaDir: "/$bunfs/root",
+      exists: (p) =>
+        p === "/opt/copilot-api/release/drizzle/meta/_journal.json",
+    })
+    expect(result).toBe("/opt/copilot-api/release/drizzle")
   })
 })
