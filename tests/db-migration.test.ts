@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import * as migrator from "drizzle-orm/bun-sqlite/migrator"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -62,5 +63,19 @@ describe("initDb migration", () => {
       .get() as { cost_nano_aiu: number | null }
     expect(row.cost_nano_aiu).toBe(1_500_000)
     sqlite.close()
+  })
+})
+
+describe("initDb fail-fast", () => {
+  test("rethrows on migration failure", () => {
+    const p = tmpDbPath()
+    const spy = spyOn(migrator, "migrate").mockImplementation(() => {
+      throw new Error("synthetic migration failure")
+    })
+    try {
+      expect(() => initDb(p)).toThrow("synthetic migration failure")
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

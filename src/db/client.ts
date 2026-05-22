@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite"
+import consola from "consola"
 import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite"
 import { migrate } from "drizzle-orm/bun-sqlite/migrator"
 import fs from "node:fs"
@@ -20,8 +21,29 @@ export function initDb(dbPath: string): BunSQLiteDatabase<typeof schema> {
     /* ignore on systems that don't support chmod */
   }
   db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: "drizzle" })
+
+  try {
+    migrate(db, { migrationsFolder: resolveMigrationsFolder() })
+  } catch (err) {
+    consola.fatal("Database migration failed; refusing to start.", err)
+    throw err
+  }
+
   return db
+}
+
+/**
+ * Find the drizzle migrations folder regardless of how the binary was
+ * launched:
+ *   - `bun run dev` → repo-root/drizzle
+ *   - `bun dist/main.js` (packaged) → dist/drizzle (scripts/package.ts
+ *     already copies the folder into the release tree).
+ */
+function resolveMigrationsFolder(): string {
+  const here = import.meta.dir
+  const bundled = path.join(here, "drizzle")
+  if (fs.existsSync(bundled)) return bundled
+  return path.join(here, "..", "..", "drizzle")
 }
 
 export function getDb(): BunSQLiteDatabase<typeof schema> {
