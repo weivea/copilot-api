@@ -316,7 +316,7 @@ export function translateToAnthropic(
 
   // Note: GitHub Copilot doesn't generate thinking blocks, so we don't include them in responses
 
-  return {
+  const out: AnthropicResponse = {
     id: response.id,
     type: "message",
     role: "assistant",
@@ -336,6 +336,18 @@ export function translateToAnthropic(
       }),
     },
   }
+
+  return mountCopilotInfoMessages(out, response)
+}
+
+function mountCopilotInfoMessages(
+  out: AnthropicResponse,
+  source: ChatCompletionResponse,
+): AnthropicResponse {
+  if (source.copilot_info_messages?.length) {
+    out.copilot_info_messages = source.copilot_info_messages
+  }
+  return out
 }
 
 function getAnthropicTextBlocks(

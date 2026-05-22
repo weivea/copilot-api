@@ -1,5 +1,7 @@
 // Anthropic API Types
 
+import type { CopilotInfoMessage } from "~/services/copilot/types-shared"
+
 export interface AnthropicMessagesPayload {
   model: string
   messages: Array<AnthropicMessage>
@@ -108,6 +110,7 @@ export interface AnthropicResponse {
     cache_read_input_tokens?: number
     service_tier?: "standard" | "priority" | "batch"
   }
+  copilot_info_messages?: Array<CopilotInfoMessage>
 }
 
 export type AnthropicResponseContentBlock = AnthropicAssistantContentBlock
@@ -181,6 +184,11 @@ export interface AnthropicErrorEvent {
   }
 }
 
+export interface AnthropicCopilotInfoEvent {
+  type: "copilot_info"
+  messages: Array<CopilotInfoMessage>
+}
+
 export type AnthropicStreamEventData =
   | AnthropicMessageStartEvent
   | AnthropicContentBlockStartEvent
@@ -209,4 +217,5 @@ export interface AnthropicStreamState {
   finalEventsSent?: boolean
   // Captured stop_reason from upstream (last non-null finish_reason).
   finishReason?: string | null
+  copilotInfoMessages?: Array<CopilotInfoMessage>
 }
