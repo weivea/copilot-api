@@ -18,6 +18,11 @@ import {
   type ResponsesResponse,
 } from "~/services/copilot/create-responses"
 
+import type {
+  CopilotInfoMessage,
+  CopilotUsage,
+} from "./types-shared"
+
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
   options?: { signal?: AbortSignal },
@@ -124,11 +129,15 @@ function isUnsupportedApiForModelError(error: unknown): boolean {
 
 export interface ChatCompletionChunk {
   id: string
-  object: "chat.completion.chunk"
+  object?: "chat.completion.chunk"
   created: number
   model: string
   choices: Array<Choice>
   system_fingerprint?: string
+  prompt_filter_results?: Array<{
+    prompt_index: number
+    content_filter_results: Record<string, unknown>
+  }>
   usage?: {
     prompt_tokens: number
     completion_tokens: number
@@ -141,6 +150,8 @@ export interface ChatCompletionChunk {
       rejected_prediction_tokens: number
     }
   }
+  copilot_usage?: CopilotUsage
+  copilot_info_messages?: Array<CopilotInfoMessage>
 }
 
 interface Delta {
@@ -162,14 +173,15 @@ interface Choice {
   delta: Delta
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter" | null
   logprobs: object | null
+  content_filter_results?: Record<string, unknown>
 }
 
 // Non-streaming types
 
 export interface ChatCompletionResponse {
   id: string
-  object: "chat.completion"
-  created: number
+  object?: "chat.completion"
+  created?: number
   model: string
   choices: Array<ChoiceNonStreaming>
   system_fingerprint?: string
@@ -177,15 +189,27 @@ export interface ChatCompletionResponse {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
+    reasoning_tokens?: number
     prompt_tokens_details?: {
       cached_tokens: number
     }
+    completion_tokens_details?: {
+      accepted_prediction_tokens: number
+      rejected_prediction_tokens: number
+    }
   }
+  prompt_filter_results?: Array<{
+    prompt_index: number
+    content_filter_results: Record<string, unknown>
+  }>
+  copilot_usage?: CopilotUsage
+  copilot_info_messages?: Array<CopilotInfoMessage>
 }
 
 interface ResponseMessage {
   role: "assistant"
   content: string | null
+  padding?: string
   tool_calls?: Array<ToolCall>
 }
 
@@ -194,6 +218,7 @@ interface ChoiceNonStreaming {
   message: ResponseMessage
   logprobs: object | null
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter"
+  content_filter_results?: Record<string, unknown>
 }
 
 // Payload types
