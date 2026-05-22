@@ -3,11 +3,49 @@ import type { Context } from "hono"
 import consola from "consola"
 import { z } from "zod"
 
+import {
+  captureInfoMessages,
+  pickCostNanoAiu,
+} from "~/lib/copilot-info-messages"
 import { HTTPError } from "~/lib/error"
+import { deferUsage, flushUsage, recordUsage } from "~/lib/usage-recorder"
 import {
   createResponses,
   type ResponsesPayload,
+  type ResponsesResponse,
 } from "~/services/copilot/create-responses"
+
+interface StreamCaptureState {
+  cost: number | null
+  model: string | null
+  usage: { input: number; output: number; total: number }
+}
+
+function captureFromCompletedEvent(
+  evt: { event?: string; data?: string },
+  capture: StreamCaptureState,
+): void {
+  if (evt.event !== "response.completed" || !evt.data) return
+  try {
+    const parsed = JSON.parse(evt.data) as { response?: ResponsesResponse }
+    if (!parsed.response) return
+    captureInfoMessages(parsed.response, {
+      endpoint: "/v1/responses",
+      model: parsed.response.model,
+    })
+    const cost = pickCostNanoAiu(parsed.response)
+    if (cost !== null) capture.cost = cost
+    capture.usage.input =
+      parsed.response.usage?.input_tokens ?? capture.usage.input
+    capture.usage.output =
+      parsed.response.usage?.output_tokens ?? capture.usage.output
+    capture.usage.total =
+      parsed.response.usage?.total_tokens ?? capture.usage.total
+    capture.model = parsed.response.model
+  } catch {
+    /* best-effort; never break pass-through on parse failure */
+  }
+}
 
 const requestSchema = z
   .object({
@@ -75,6 +113,13 @@ export async function handleResponses(c: Context) {
   })
 
   if (payload.stream) {
+    const capture: StreamCaptureState = {
+      cost: null,
+      model: null,
+      usage: { input: 0, output: 0, total: 0 },
+    }
+    deferUsage(c)
+
     // Pass-through SSE: serialise each event back into the SSE wire format.
     return new Response(
       new ReadableStream({
@@ -87,6 +132,7 @@ export async function handleResponses(c: Context) {
               id?: string
               retry?: number
             }>) {
+              captureFromCompletedEvent(evt, capture)
               if (evt.id !== undefined)
                 controller.enqueue(encoder.encode(`id: ${evt.id}\n`))
               if (evt.event)
@@ -107,6 +153,14 @@ export async function handleResponses(c: Context) {
             )
           } finally {
             c.req.raw.signal.removeEventListener("abort", onAbort)
+            recordUsage(c, {
+              model: capture.model,
+              promptTokens: capture.usage.input || null,
+              completionTokens: capture.usage.output || null,
+              totalTokens: capture.usage.total || null,
+              costNanoAiu: capture.cost,
+            })
+            flushUsage(c)
             controller.close()
           }
         },
@@ -129,5 +183,17 @@ export async function handleResponses(c: Context) {
     throw new HTTPError("Unexpected upstream response type", upstream)
   }
 
-  return c.json(upstream)
+  const resp = upstream as ResponsesResponse
+  captureInfoMessages(resp, {
+    endpoint: "/v1/responses",
+    model: resp.model,
+  })
+  recordUsage(c, {
+    model: resp.model,
+    promptTokens: resp.usage?.input_tokens ?? null,
+    completionTokens: resp.usage?.output_tokens ?? null,
+    totalTokens: resp.usage?.total_tokens ?? null,
+    costNanoAiu: pickCostNanoAiu(resp),
+  })
+  return c.json(resp)
 }
