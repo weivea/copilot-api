@@ -13,9 +13,7 @@ const logged = new WeakSet<object>()
  * return them so the caller can decide how to propagate.
  */
 export function captureInfoMessages(
-  source:
-    | { copilot_info_messages?: Array<CopilotInfoMessage> }
-    | undefined,
+  source: { copilot_info_messages?: Array<CopilotInfoMessage> } | undefined,
   ctx: { endpoint: string; model?: string | null },
 ): Array<CopilotInfoMessage> | undefined {
   if (!source?.copilot_info_messages?.length) return undefined
