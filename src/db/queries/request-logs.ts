@@ -19,6 +19,7 @@ export interface NewRequestLog {
   promptTokens?: number | null
   completionTokens?: number | null
   totalTokens?: number | null
+  costNanoAiu?: number | null
   statusCode: number
   latencyMs?: number | null
 }
@@ -33,6 +34,7 @@ export async function insertRequestLog(input: NewRequestLog): Promise<void> {
     promptTokens: input.promptTokens ?? null,
     completionTokens: input.completionTokens ?? null,
     totalTokens: input.totalTokens ?? null,
+    costNanoAiu: input.costNanoAiu ?? null,
     statusCode: input.statusCode,
     latencyMs: input.latencyMs ?? null,
   })
