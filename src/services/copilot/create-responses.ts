@@ -4,6 +4,10 @@ import { events } from "fetch-event-stream"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import type {
+  CopilotInfoMessage,
+  CopilotUsage,
+} from "~/services/copilot/types-shared"
 
 function isMessageItem(item: ResponsesInputItem): item is ResponsesMessageItem {
   return item.type === undefined || item.type === "message"
@@ -150,6 +154,24 @@ export interface ResponsesResponse {
   error?: { message: string; code?: string } | null
   metadata?: Record<string, string>
   incomplete_details?: { reason?: string } | null
+
+  // Additive fields appearing with API_VERSION 2026-01-09:
+  output_text?: string | null
+  parallel_tool_calls?: boolean
+  previous_response_id?: string | null
+  prompt_cache_retention?: string
+  safety_identifier?: string
+  service_tier?: "default" | string
+  temperature?: number
+  top_p?: number
+  truncation?: "auto" | "disabled"
+  tool_choice?: unknown
+  tools?: Array<unknown>
+  reasoning?: { effort?: string; summary?: unknown }
+  text?: { format?: { type: string }; verbosity?: string }
+  max_output_tokens?: number | null
+  copilot_usage?: CopilotUsage
+  copilot_info_messages?: Array<CopilotInfoMessage>
 }
 
 export type ResponsesOutputItem =
@@ -162,8 +184,14 @@ export interface ResponsesMessageOutput {
   id: string
   status: "completed" | "in_progress"
   role: "assistant"
+  phase?: string
   content: Array<
-    | { type: "output_text"; text: string; annotations?: Array<unknown> }
+    | {
+        type: "output_text"
+        text: string
+        annotations?: Array<unknown>
+        logprobs?: Array<unknown>
+      }
     | { type: "refusal"; refusal: string }
   >
 }
