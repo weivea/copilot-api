@@ -7,12 +7,16 @@ export const standardHeaders = () => ({
   accept: "application/json",
 })
 
-const COPILOT_VERSION = "0.57.0"
+const COPILOT_VERSION = "0.59.0"
 const EDITOR_PLUGIN_VERSION = `copilot-chat/${COPILOT_VERSION}`
 const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 
-const COPILOT_API_VERSION = "2026-01-09"
+// Source: @vscode/copilot-api@0.4.3, used by VS Code 1.129 stable.
+const COPILOT_API_VERSION = "2026-06-01"
 const GITHUB_API_VERSION = "2025-04-01"
+const CLIENT_SESSION_ID = randomUUID()
+const CLIENT_MACHINE_ID = randomUUID()
+const CLIENT_DEVICE_ID = randomUUID()
 
 export const copilotBaseUrl = (state: State) =>
   state.copilotApiBaseUrl?.replace(/\/+$/, "")
@@ -31,10 +35,12 @@ export const copilotHeaders = (state: State, vision: boolean = false) => {
     "openai-intent": "conversation-panel",
     "x-github-api-version": COPILOT_API_VERSION,
     "x-request-id": requestId,
-    "x-interaction-id": requestId,
     "x-interaction-type": "conversation-panel",
     "x-agent-task-id": requestId,
-    "x-vscode-user-agent-library-version": "electron-fetch",
+    "VScode-SessionId": CLIENT_SESSION_ID,
+    "VScode-MachineId": CLIENT_MACHINE_ID,
+    "Editor-Device-Id": CLIENT_DEVICE_ID,
+    "x-vscode-user-agent-library-version": "node-http",
   }
 
   if (vision) headers["copilot-vision-request"] = "true"
@@ -50,7 +56,7 @@ export const githubHeaders = (state: State) => ({
   "editor-plugin-version": EDITOR_PLUGIN_VERSION,
   "user-agent": USER_AGENT,
   "x-github-api-version": GITHUB_API_VERSION,
-  "x-vscode-user-agent-library-version": "electron-fetch",
+  "x-vscode-user-agent-library-version": "node-http",
 })
 
 export const GITHUB_BASE_URL = "https://github.com"

@@ -50,10 +50,29 @@ describe("/v1/responses route", () => {
         previous_response_id: "resp_prev",
       }),
     })
+
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: { message: string } }
     expect(body.error.message).toContain("previous_response_id")
   })
+
+  test.each(["store", "background"])(
+    "rejects stateful %s mode",
+    async (field) => {
+      const res = await responsesRoutes.request("/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-5.5",
+          input: "hi",
+          [field]: true,
+        }),
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error: { message: string } }
+      expect(body.error.message).toContain(`${field}: true`)
+    },
+  )
 
   test("missing model returns 400", async () => {
     const res = await responsesRoutes.request("/", {

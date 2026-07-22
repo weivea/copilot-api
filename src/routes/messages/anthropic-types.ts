@@ -1,6 +1,10 @@
 // Anthropic API Types
 
-import type { CopilotInfoMessage } from "~/services/copilot/types-shared"
+import type {
+  CopilotInfoMessage,
+  CopilotUsage,
+  ReasoningEffort,
+} from "~/services/copilot/types-shared"
 
 export interface AnthropicMessagesPayload {
   model: string
@@ -21,8 +25,11 @@ export interface AnthropicMessagesPayload {
     name?: string
   }
   thinking?: {
-    type: "enabled"
+    type: "enabled" | "disabled" | "adaptive"
     budget_tokens?: number
+  }
+  output_config?: {
+    effort?: ReasoningEffort
   }
   service_tier?: "auto" | "standard_only"
 }
@@ -58,6 +65,7 @@ export interface AnthropicToolUseBlock {
 export interface AnthropicThinkingBlock {
   type: "thinking"
   thinking: string
+  signature?: string
 }
 
 export type AnthropicUserContentBlock =
@@ -108,8 +116,13 @@ export interface AnthropicResponse {
     output_tokens: number
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number
+      ephemeral_1h_input_tokens?: number
+    }
     service_tier?: "standard" | "priority" | "batch"
   }
+  copilot_usage?: CopilotUsage
   copilot_info_messages?: Array<CopilotInfoMessage>
 }
 
@@ -166,6 +179,7 @@ export interface AnthropicMessageDeltaEvent {
     cache_creation_input_tokens?: number
     cache_read_input_tokens?: number
   }
+  copilot_usage?: CopilotUsage
 }
 
 export interface AnthropicMessageStopEvent {
@@ -198,6 +212,7 @@ export type AnthropicStreamEventData =
   | AnthropicMessageStopEvent
   | AnthropicPingEvent
   | AnthropicErrorEvent
+  | AnthropicCopilotInfoEvent
 
 // State for streaming translation
 export interface AnthropicStreamState {

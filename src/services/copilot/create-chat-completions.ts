@@ -145,10 +145,12 @@ export interface ChatCompletionChunk {
     total_tokens?: number
     prompt_tokens_details?: {
       cached_tokens: number
+      cache_creation_input_tokens?: number
     }
     completion_tokens_details?: {
-      accepted_prediction_tokens: number
-      rejected_prediction_tokens: number
+      accepted_prediction_tokens?: number
+      rejected_prediction_tokens?: number
+      reasoning_tokens?: number
     }
   }
   copilot_usage?: CopilotUsage
@@ -186,6 +188,7 @@ export interface ChatCompletionResponse {
   model: string
   choices: Array<ChoiceNonStreaming>
   system_fingerprint?: string
+  service_tier?: string
   usage?: {
     prompt_tokens: number
     completion_tokens: number
@@ -193,10 +196,12 @@ export interface ChatCompletionResponse {
     reasoning_tokens?: number
     prompt_tokens_details?: {
       cached_tokens: number
+      cache_creation_input_tokens?: number
     }
     completion_tokens_details?: {
-      accepted_prediction_tokens: number
-      rejected_prediction_tokens: number
+      accepted_prediction_tokens?: number
+      rejected_prediction_tokens?: number
+      reasoning_tokens?: number
     }
   }
   prompt_filter_results?: Array<{
@@ -240,6 +245,7 @@ export interface ChatCompletionsPayload {
   presence_penalty?: number | null
   logit_bias?: Record<string, number> | null
   logprobs?: boolean | null
+  top_logprobs?: number | null
   response_format?:
     | { type: "text" }
     | { type: "json_object" }
@@ -263,6 +269,7 @@ export interface ChatCompletionsPayload {
     | null
   parallel_tool_calls?: boolean | null
   reasoning_effort?: ReasoningEffort | null
+  thinking_budget?: number | null
   metadata?: Record<string, string> | null
   service_tier?: string | null
   store?: boolean | null

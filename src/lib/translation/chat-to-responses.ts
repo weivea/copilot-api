@@ -9,6 +9,7 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type {
   ResponsesContentPart,
+  ResponsesCompletedEvent,
   ResponsesInputItem,
   ResponsesPayload,
   ResponsesResponse,
@@ -92,20 +93,46 @@ function applyResponsesOptions(
 ): void {
   if (systemTexts.length > 0) out.instructions = systemTexts.join("\n\n")
   if (isPresent(chat.stream)) out.stream = chat.stream
+  applySamplingOptions(chat, out)
+  applyToolOptions(chat, out)
+  applyOutputOptions(chat, out)
+}
+
+function applySamplingOptions(
+  chat: ChatCompletionsPayload,
+  out: ResponsesPayload,
+): void {
   if (isPresent(chat.temperature)) out.temperature = chat.temperature
   if (isPresent(chat.top_p)) out.top_p = chat.top_p
+  if (isPresent(chat.frequency_penalty))
+    out.frequency_penalty = chat.frequency_penalty
+  if (isPresent(chat.presence_penalty))
+    out.presence_penalty = chat.presence_penalty
+  if (isPresent(chat.top_logprobs)) out.top_logprobs = chat.top_logprobs
   if (isPresent(chat.stop)) out.stop = chat.stop
   const maxOutputTokens = chat.max_completion_tokens ?? chat.max_tokens
   if (isPresent(maxOutputTokens)) out.max_output_tokens = maxOutputTokens
-  if (isPresent(chat.user)) out.user = chat.user
-  if (isPresent(chat.metadata)) out.metadata = chat.metadata
+}
+
+function applyToolOptions(
+  chat: ChatCompletionsPayload,
+  out: ResponsesPayload,
+): void {
   if (isPresent(chat.parallel_tool_calls))
     out.parallel_tool_calls = chat.parallel_tool_calls
-  if (isPresent(chat.service_tier)) out.service_tier = chat.service_tier
   if (isPresent(chat.tool_choice))
     out.tool_choice = translateToolChoice(chat.tool_choice)
   if (isPresent(chat.tools))
     out.tools = chat.tools.map((tool) => translateTool(tool))
+}
+
+function applyOutputOptions(
+  chat: ChatCompletionsPayload,
+  out: ResponsesPayload,
+): void {
+  if (isPresent(chat.user)) out.user = chat.user
+  if (isPresent(chat.metadata)) out.metadata = chat.metadata
+  if (isPresent(chat.service_tier)) out.service_tier = chat.service_tier
   if (isPresent(chat.reasoning_effort))
     out.reasoning = { effort: chat.reasoning_effort }
   if (isPresent(chat.response_format))
@@ -123,7 +150,7 @@ function translateResponseFormat(
 }
 
 function stringifyContent(content: Message["content"]): string {
-  if (content == null) return ""
+  if (content === null) return ""
   if (typeof content === "string") return content
   return content
     .map((part) => (part.type === "text" ? part.text : ""))
@@ -134,21 +161,18 @@ function stringifyContent(content: Message["content"]): string {
 function messageContentToResponses(
   content: Message["content"],
 ): Array<ResponsesContentPart> {
-  if (content == null) return []
+  if (content === null) return []
   if (typeof content === "string") {
     return [{ type: "input_text", text: content }]
   }
   return content
-    .map(translatePart)
+    .map((part) => translatePart(part))
     .filter(Boolean) as Array<ResponsesContentPart>
 }
 
 function translatePart(part: ContentPart): ResponsesContentPart | null {
   if (part.type === "text") return { type: "input_text", text: part.text }
-  if (part.type === "image_url") {
-    return { type: "input_image", image_url: part.image_url.url }
-  }
-  return null
+  return { type: "input_image", image_url: part.image_url.url }
 }
 
 function translateTool(tool: Tool): ResponsesTool {
@@ -194,12 +218,6 @@ export function responsesToChatResponse(
     // reasoning items intentionally dropped from chat-shaped output for now
   }
 
-  const finishReason: ChatCompletionResponse["choices"][number]["finish_reason"] =
-    toolCalls.length > 0 ? "tool_calls"
-    : resp.status === "incomplete" ? "length"
-    : resp.status === "failed" ? "content_filter"
-    : "stop"
-
   const content = messageParts.length > 0 ? messageParts.join("") : null
 
   return {
@@ -216,25 +234,49 @@ export function responsesToChatResponse(
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         },
         logprobs: null,
-        finish_reason: finishReason,
+        finish_reason: responsesFinishReason(resp, toolCalls.length > 0),
       },
     ],
-    usage:
-      resp.usage ?
-        {
-          prompt_tokens: resp.usage.input_tokens,
-          completion_tokens: resp.usage.output_tokens,
-          total_tokens: resp.usage.total_tokens,
-          ...(resp.usage.input_tokens_details ?
-            {
-              prompt_tokens_details: {
-                cached_tokens:
-                  resp.usage.input_tokens_details.cached_tokens ?? 0,
-              },
-            }
-          : {}),
-        }
-      : undefined,
+    usage: responsesUsageToChatUsage(resp),
+    service_tier: resp.service_tier,
+    copilot_usage: resp.copilot_usage,
+    copilot_info_messages: resp.copilot_info_messages,
+  }
+}
+
+function responsesFinishReason(
+  response: ResponsesResponse,
+  hasToolCalls: boolean,
+): ChatCompletionResponse["choices"][number]["finish_reason"] {
+  if (hasToolCalls) return "tool_calls"
+  if (response.status === "incomplete") return "length"
+  if (response.status === "failed") return "content_filter"
+  return "stop"
+}
+
+function responsesUsageToChatUsage(
+  response: ResponsesResponse,
+): ChatCompletionResponse["usage"] {
+  const usage = response.usage
+  if (!usage) return undefined
+  const cacheWriteTokens = usage.input_tokens_details?.cache_write_tokens
+  const reasoningTokens = usage.output_tokens_details?.reasoning_tokens
+  return {
+    prompt_tokens: usage.input_tokens,
+    completion_tokens: usage.output_tokens,
+    total_tokens: usage.total_tokens,
+    ...(usage.input_tokens_details && {
+      prompt_tokens_details: {
+        cached_tokens: usage.input_tokens_details.cached_tokens ?? 0,
+        ...(cacheWriteTokens !== undefined && {
+          cache_creation_input_tokens: cacheWriteTokens,
+        }),
+      },
+    }),
+    ...(reasoningTokens !== undefined && {
+      reasoning_tokens: reasoningTokens,
+      completion_tokens_details: { reasoning_tokens: reasoningTokens },
+    }),
   }
 }
 
@@ -255,18 +297,17 @@ interface TextDeltaPayload {
 }
 interface FnArgsDeltaPayload {
   call_id?: string
+  item_id?: string
+  output_index?: number
   delta?: string
 }
 interface ItemAddedPayload {
-  item?: { type?: string; call_id?: string; name?: string }
-}
-interface CompletedPayload {
-  response?: {
-    usage?: {
-      input_tokens?: number
-      output_tokens?: number
-      total_tokens?: number
-    }
+  output_index?: number
+  item?: {
+    type?: string
+    id?: string
+    call_id?: string
+    name?: string
   }
 }
 interface FailedPayload {
@@ -287,6 +328,7 @@ export async function* responsesStreamToChatStream(
   let sawToolCall = false
   // call_id → index assignment so deltas can be merged client-side
   const callIndex = new Map<string, number>()
+  const outputIndexToCallIndex = new Map<number, number>()
   let nextIndex = 0
 
   const baseChunk = (
@@ -303,7 +345,7 @@ export async function* responsesStreamToChatStream(
 
   for await (const evt of upstream) {
     if (!evt.event || evt.data === undefined) continue
-    let payload: Record<string, unknown> = {}
+    let payload: Record<string, unknown>
     try {
       payload = JSON.parse(evt.data) as Record<string, unknown>
     } catch {
@@ -339,6 +381,10 @@ export async function* responsesStreamToChatStream(
           sawToolCall = true
           const idx = nextIndex++
           callIndex.set(item.call_id, idx)
+          if (item.id) callIndex.set(item.id, idx)
+          const outputIndex = (payload as ItemAddedPayload).output_index
+          if (outputIndex !== undefined)
+            outputIndexToCallIndex.set(outputIndex, idx)
           yield {
             data: baseChunk({
               tool_calls: [
@@ -358,9 +404,14 @@ export async function* responsesStreamToChatStream(
       case "response.function_call_arguments.delta": {
         const p = payload as FnArgsDeltaPayload
         const delta = p.delta
-        const callId = p.call_id
-        if (typeof delta !== "string" || !callId) break
-        const idx = callIndex.get(callId) ?? 0
+        if (typeof delta !== "string") break
+        const idx =
+          (p.call_id ? callIndex.get(p.call_id) : undefined)
+          ?? (p.item_id ? callIndex.get(p.item_id) : undefined)
+          ?? (p.output_index === undefined ?
+            undefined
+          : outputIndexToCallIndex.get(p.output_index))
+          ?? 0
         sawToolCall = true
         yield {
           data: baseChunk({
@@ -375,13 +426,22 @@ export async function* responsesStreamToChatStream(
         break
       }
 
-      case "response.completed": {
-        const usage = (payload as CompletedPayload).response?.usage
+      case "response.completed":
+      case "response.incomplete": {
+        const completed = payload as ResponsesCompletedEvent
+        const response = completed.response
+        const usage = response?.usage
+        const incomplete =
+          evt.event === "response.incomplete"
+          || response?.status === "incomplete"
+        let finishReason = "stop"
+        if (sawToolCall) finishReason = "tool_calls"
+        else if (incomplete) finishReason = "length"
         const finalChoices = [
           {
             index: 0,
             delta: {},
-            finish_reason: sawToolCall ? "tool_calls" : "stop",
+            finish_reason: finishReason,
             logprobs: null,
           },
         ]
@@ -394,11 +454,34 @@ export async function* responsesStreamToChatStream(
           usage:
             usage ?
               {
-                prompt_tokens: usage.input_tokens ?? 0,
-                completion_tokens: usage.output_tokens ?? 0,
-                total_tokens: usage.total_tokens ?? 0,
+                prompt_tokens: usage.input_tokens,
+                completion_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                ...(usage.input_tokens_details && {
+                  prompt_tokens_details: {
+                    cached_tokens:
+                      usage.input_tokens_details.cached_tokens ?? 0,
+                    ...(usage.input_tokens_details.cache_write_tokens
+                      !== undefined && {
+                      cache_creation_input_tokens:
+                        usage.input_tokens_details.cache_write_tokens,
+                    }),
+                  },
+                }),
+                ...(usage.output_tokens_details?.reasoning_tokens
+                  !== undefined && {
+                  reasoning_tokens:
+                    usage.output_tokens_details.reasoning_tokens,
+                  completion_tokens_details: {
+                    reasoning_tokens:
+                      usage.output_tokens_details.reasoning_tokens,
+                  },
+                }),
               }
             : undefined,
+          copilot_usage: completed.copilot_usage ?? response?.copilot_usage,
+          copilot_info_messages:
+            completed.copilot_info_messages ?? response?.copilot_info_messages,
         })
         yield { data: final }
         yield { data: "[DONE]" }

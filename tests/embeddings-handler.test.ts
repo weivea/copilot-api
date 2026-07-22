@@ -44,9 +44,13 @@ describe("embeddings handler", () => {
 
     expect(res.status).toBe(200)
     const body = (await res.json()) as {
+      object: string
+      model: string
       data: Array<{ embedding: Array<number> }>
       usage: { prompt_tokens: number }
     }
+    expect(body.object).toBe("list")
+    expect(body.model).toBe("text-embedding-3-small")
     expect(body.data).toHaveLength(1)
     expect(body.data[0].embedding).toEqual([0.1, 0.2, 0.3])
     expect(body.usage.prompt_tokens).toBe(1)

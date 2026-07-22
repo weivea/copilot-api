@@ -43,6 +43,11 @@ export function translateToOpenAI(
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
+    thinking_budget:
+      payload.thinking?.type === "enabled" ?
+        payload.thinking.budget_tokens
+      : undefined,
+    reasoning_effort: payload.output_config?.effort,
   }
 }
 
@@ -327,12 +332,19 @@ export function translateToAnthropic(
     usage: {
       input_tokens:
         (response.usage?.prompt_tokens ?? 0)
-        - (response.usage?.prompt_tokens_details?.cached_tokens ?? 0),
+        - (response.usage?.prompt_tokens_details?.cached_tokens ?? 0)
+        - (response.usage?.prompt_tokens_details?.cache_creation_input_tokens
+          ?? 0),
       output_tokens: response.usage?.completion_tokens ?? 0,
       ...(response.usage?.prompt_tokens_details?.cached_tokens
         !== undefined && {
         cache_read_input_tokens:
           response.usage.prompt_tokens_details.cached_tokens,
+      }),
+      ...(response.usage?.prompt_tokens_details?.cache_creation_input_tokens
+        !== undefined && {
+        cache_creation_input_tokens:
+          response.usage.prompt_tokens_details.cache_creation_input_tokens,
       }),
     },
   }

@@ -14,6 +14,7 @@ const SECTIONS: Array<Section> = [
   { id: "quick-start", title: "Quick Start" },
   { id: "endpoints", title: "API Endpoints" },
   { id: "openai", title: "OpenAI-compatible Endpoints" },
+  { id: "responses", title: "Responses API" },
   { id: "anthropic", title: "Anthropic-compatible Endpoints" },
   { id: "claude-code", title: "Claude Code Setup" },
   { id: "notes", title: "Notes & Limits" },
@@ -48,6 +49,20 @@ const ENDPOINTS: Array<EndpointRow> = [
     family: "OpenAI",
     auth: "Bearer",
     purpose: "Same as above — /v1 alias for SDKs that require it.",
+  },
+  {
+    method: "POST",
+    path: "/responses",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Responses API (streaming + non-streaming).",
+  },
+  {
+    method: "POST",
+    path: "/v1/responses",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Same as above — /v1 alias for OpenAI SDKs.",
   },
   {
     method: "GET",
@@ -214,6 +229,24 @@ export function Docs() {
     "model": "gpt-4o",
     "stream": true,
     "messages": [{"role": "user", "content": "Stream this"}]
+  }'`
+
+  const openaiResponses = `curl ${baseUrl}/v1/responses \\
+  -H "authorization: Bearer ${tokenPlaceholder}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "gpt-5.4-mini",
+    "input": "Explain why the sky is blue in one sentence.",
+    "max_output_tokens": 256
+  }'`
+
+  const openaiResponsesStream = `curl -N ${baseUrl}/v1/responses \\
+  -H "authorization: Bearer ${tokenPlaceholder}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "gpt-5.4-mini",
+    "input": "Count from one to five.",
+    "stream": true
   }'`
 
   const openaiModels = `curl ${baseUrl}/v1/models \\
@@ -385,13 +418,9 @@ print(resp.choices[0].message.content)`
               </tbody>
             </table>
             <p className="muted small">
-              Each model in <code>/v1/models</code> carries a{" "}
-              <code>supported_endpoints</code> array indicating which of these
-              routes it accepts (for example, embedding models only accept{" "}
-              <code>/embeddings</code>; chat models accept{" "}
-              <code>/chat/completions</code> and most also accept{" "}
-              <code>/v1/messages</code>). See the{" "}
-              <a href="/copilot-models">Models</a> page for the live list.
+              Model endpoint support varies by account and model. See the{" "}
+              <a href="/copilot-models">Models</a> page for each model&apos;s
+              live <code>supported_endpoints</code> list.
             </p>
           </section>
 
@@ -421,6 +450,53 @@ print(resp.choices[0].message.content)`
 
             <h3>Python (openai SDK)</h3>
             <CodeBlock code={pythonOpenai} />
+          </section>
+
+          <section id="responses">
+            <h2>Responses API</h2>
+            <p>
+              The native OpenAI Responses API is available at both{" "}
+              <code>/responses</code> and <code>/v1/responses</code>. Requests,
+              responses, tool calls, reasoning output, usage, and Copilot
+              billing metadata are passed through without converting them to
+              Chat Completions format.
+            </p>
+
+            <h3>Non-streaming request</h3>
+            <CodeBlock code={openaiResponses} />
+
+            <h3>Streaming request</h3>
+            <p>
+              Set <code>"stream": true</code> to receive native Responses SSE
+              events such as <code>response.output_text.delta</code> and{" "}
+              <code>response.completed</code>.
+            </p>
+            <CodeBlock code={openaiResponsesStream} />
+
+            <h3>Supported behavior</h3>
+            <ul>
+              <li>
+                Accepts string input or Responses-format message, function call,
+                and function output items.
+              </li>
+              <li>
+                Supports tools, structured text output, reasoning options,
+                sampling controls, prompt caching fields, and service tiers when
+                the selected model supports them.
+              </li>
+              <li>
+                Select a model whose <code>supported_endpoints</code> includes{" "}
+                <code>/responses</code> on the{" "}
+                <a href="/copilot-models">Models</a> page.
+              </li>
+            </ul>
+
+            <p className="muted small">
+              This proxy is stateless. <code>previous_response_id</code>,{" "}
+              <code>store: true</code>, and <code>background: true</code> are
+              rejected with <code>400 invalid_request_error</code>; forwarded
+              requests always use <code>store: false</code>.
+            </p>
           </section>
 
           <section id="anthropic">

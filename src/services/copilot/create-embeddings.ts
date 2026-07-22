@@ -17,7 +17,12 @@ export const createEmbeddings = async (payload: EmbeddingRequest) => {
 
   if (!response.ok) throw new HTTPError("Failed to create embeddings", response)
 
-  return (await response.json()) as EmbeddingResponse
+  const result = (await response.json()) as UpstreamEmbeddingResponse
+  return {
+    ...result,
+    object: result.object ?? "list",
+    model: result.model ?? payload.model,
+  }
 }
 
 export interface EmbeddingRequest {
@@ -35,11 +40,16 @@ export interface Embedding {
 }
 
 export interface EmbeddingResponse {
-  object?: string
+  object: "list"
   data: Array<Embedding>
-  model?: string
+  model: string
   usage: {
     prompt_tokens: number
     total_tokens: number
   }
+}
+
+type UpstreamEmbeddingResponse = Omit<EmbeddingResponse, "model" | "object"> & {
+  object?: "list"
+  model?: string
 }

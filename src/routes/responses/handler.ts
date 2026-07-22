@@ -11,6 +11,7 @@ import { HTTPError } from "~/lib/error"
 import { deferUsage, flushUsage, recordUsage } from "~/lib/usage-recorder"
 import {
   createResponses,
+  type ResponsesCompletedEvent,
   type ResponsesPayload,
   type ResponsesResponse,
 } from "~/services/copilot/create-responses"
@@ -25,15 +26,23 @@ function captureFromCompletedEvent(
   evt: { event?: string; data?: string },
   capture: StreamCaptureState,
 ): void {
-  if (evt.event !== "response.completed" || !evt.data) return
+  if (
+    (evt.event !== "response.completed" && evt.event !== "response.incomplete")
+    || !evt.data
+  )
+    return
   try {
-    const parsed = JSON.parse(evt.data) as { response?: ResponsesResponse }
+    const parsed = JSON.parse(evt.data) as ResponsesCompletedEvent
     if (!parsed.response) return
+    captureInfoMessages(parsed, {
+      endpoint: "/v1/responses",
+      model: parsed.response.model,
+    })
     captureInfoMessages(parsed.response, {
       endpoint: "/v1/responses",
       model: parsed.response.model,
     })
-    const cost = pickCostNanoAiu(parsed.response)
+    const cost = pickCostNanoAiu(parsed) ?? pickCostNanoAiu(parsed.response)
     if (cost !== null) capture.cost = cost
     capture.usage.input =
       parsed.response.usage?.input_tokens ?? capture.usage.input
@@ -51,12 +60,18 @@ const requestSchema = z
   .object({
     model: z.string().min(1),
     input: z.union([z.string(), z.array(z.any())]),
+    background: z.boolean().nullish(),
+    include: z.array(z.string()).nullish(),
     instructions: z.string().nullish(),
     stream: z.boolean().nullish(),
     store: z.boolean().nullish(),
     previous_response_id: z.string().nullish(),
+    frequency_penalty: z.number().nullish(),
     max_output_tokens: z.number().int().nullish(),
+    max_tool_calls: z.number().int().nullish(),
+    presence_penalty: z.number().nullish(),
     temperature: z.number().nullish(),
+    top_logprobs: z.number().int().nullish(),
     top_p: z.number().nullish(),
     stop: z.union([z.string(), z.array(z.string())]).nullish(),
     tools: z.array(z.any()).nullish(),
@@ -64,6 +79,11 @@ const requestSchema = z
     reasoning: z.any().nullish(),
     modalities: z.array(z.string()).nullish(),
     metadata: z.record(z.string(), z.string()).nullish(),
+    prompt_cache_key: z.string().nullish(),
+    prompt_cache_retention: z.string().nullish(),
+    safety_identifier: z.string().nullish(),
+    service_tier: z.string().nullish(),
+    text: z.any().nullish(),
     user: z.string().nullish(),
     truncation: z.enum(["auto", "disabled"]).nullish(),
   })
@@ -91,6 +111,18 @@ export async function handleResponses(c: Context) {
         error: {
           message:
             "previous_response_id is not supported by this proxy (server-side conversation state is disabled)",
+          type: "invalid_request_error",
+        },
+      },
+      400,
+    )
+  }
+  if (body.store === true || body.background === true) {
+    const field = body.background === true ? "background" : "store"
+    return c.json(
+      {
+        error: {
+          message: `${field}: true is not supported by this stateless proxy`,
           type: "invalid_request_error",
         },
       },

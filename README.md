@@ -316,7 +316,7 @@ bun run start      # 生产模式启动
 
 | 端点 | 方法 | 描述 |
 | --- | --- | --- |
-| `/v1/messages` | `POST` | 创建 message 响应 |
+| `/v1/messages` | `POST` | 创建 message 响应；支持的 Claude 模型原生透传上游 Messages API |
 | `/v1/messages/count_tokens` | `POST` | 计算消息 token 数 |
 
 ### 上游用量信息
@@ -414,16 +414,18 @@ curl -sS http://localhost:4141/v1/responses \
   -d '{"model":"gpt-5.5","input":"hello"}'
 ```
 
-> 服务端会话状态（`previous_response_id`、`store: true`）**不**支持，传入会返回 `400`。代理始终无状态。
+> 服务端会话状态（`previous_response_id`、`store: true`、`background: true`）**不**支持，传入会返回 `400`。代理始终无状态。
 
 ### 2. `/chat/completions` 与 `/v1/messages` 透明 fallback
 
 只会说 Chat Completions 或 Anthropic Messages 协议的客户端（Claude Code 等）无须改动即可使用 Responses-only 模型。代理通过两层判断决定是否走 `/responses`：
 
-1. **自动白名单**：启动以及每次模型刷新时扫描 `/models`，凡 `supported_endpoints` 包含 `/responses` 且不含 `/chat/completions` 的模型，标记为 Responses-only。
+1. **自动路由**：启动以及每次模型刷新时扫描 `/models`；声明支持 `/responses` 的模型优先走该端点，只有 `/responses` 的模型也能直接使用。
 2. **运行时兜底**：若 `/chat/completions` 上游返回 `unsupported_api_for_model`，自动改走 `/responses` 重试，并把模型加入运行时缓存，后续直接走新路径。
 
 这两条路径上，客户端始终看到标准 `chat.completion`（或 Anthropic Messages）响应，翻译在代理内部完成。流式 fallback 仅在上游首字节前生效；若上游已经开始返回 SSE，错误透传给客户端。
+
+对 `supported_endpoints` 明确包含 `/v1/messages` 的模型，代理直接透传原生 Anthropic 协议，以保留 thinking/signature、prompt cache 统计和 `copilot_usage`；其他模型继续通过 Chat Completions 或 Responses 转译。
 
 ## 数据库
 

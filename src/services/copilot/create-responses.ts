@@ -78,12 +78,18 @@ export const createResponses = async (
 export interface ResponsesPayload {
   model: string
   input: string | Array<ResponsesInputItem>
+  background?: boolean | null
+  include?: Array<"reasoning.encrypted_content" | (string & {})> | null
   instructions?: string | null
   stream?: boolean | null
   store?: boolean | null
   previous_response_id?: string | null
+  frequency_penalty?: number | null
   max_output_tokens?: number | null
+  max_tool_calls?: number | null
+  presence_penalty?: number | null
   temperature?: number | null
+  top_logprobs?: number | null
   top_p?: number | null
   stop?: string | Array<string> | null
   tools?: Array<ResponsesTool> | null
@@ -163,22 +169,33 @@ export interface ResponsesResponse {
   id: string
   object: "response"
   created_at: number
+  completed_at?: number | null
   status: "completed" | "in_progress" | "failed" | "incomplete"
   model: string
+  background?: boolean
+  frequency_penalty?: number
   instructions?: string | null
+  max_tool_calls?: number | null
   output: Array<ResponsesOutputItem>
+  presence_penalty?: number
+  store?: boolean
+  top_logprobs?: number
+  tool_usage?: unknown
   usage?: {
     input_tokens: number
     output_tokens: number
     total_tokens: number
-    input_tokens_details?: { cached_tokens?: number }
+    input_tokens_details?: {
+      cached_tokens?: number
+      cache_write_tokens?: number
+    }
     output_tokens_details?: { reasoning_tokens?: number }
   }
   error?: { message: string; code?: string } | null
   metadata?: Record<string, string>
   incomplete_details?: { reason?: string } | null
 
-  // Additive fields appearing with API_VERSION 2026-01-09:
+  // Additive fields appearing through API_VERSION 2026-06-01:
   output_text?: string | null
   parallel_tool_calls?: boolean
   previous_response_id?: string | null
@@ -193,6 +210,15 @@ export interface ResponsesResponse {
   reasoning?: { effort?: string; summary?: unknown }
   text?: { format?: { type: string }; verbosity?: string }
   max_output_tokens?: number | null
+  moderation?: unknown
+  user?: string | null
+  copilot_usage?: CopilotUsage
+  copilot_info_messages?: Array<CopilotInfoMessage>
+}
+
+export interface ResponsesCompletedEvent {
+  type?: string
+  response?: ResponsesResponse
   copilot_usage?: CopilotUsage
   copilot_info_messages?: Array<CopilotInfoMessage>
 }
@@ -232,4 +258,5 @@ export interface ResponsesReasoningOutput {
   type: "reasoning"
   id: string
   summary: Array<{ type: "summary_text"; text: string }>
+  encrypted_content?: string
 }

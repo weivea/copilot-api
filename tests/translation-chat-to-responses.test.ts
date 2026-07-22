@@ -1,6 +1,9 @@
 import { describe, test, expect } from "bun:test"
 
-import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat-completions"
+import type {
+  ChatCompletionChunk,
+  ChatCompletionsPayload,
+} from "../src/services/copilot/create-chat-completions"
 import type { ResponsesResponse } from "../src/services/copilot/create-responses"
 
 import {
@@ -9,8 +12,15 @@ import {
   responsesStreamToChatStream,
 } from "../src/lib/translation/chat-to-responses"
 
-async function* fromArray<T>(items: Array<T>): AsyncGenerator<T> {
-  for (const it of items) yield it
+function fromArray<T>(items: Array<T>): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<T> {
+      const iterator = items[Symbol.iterator]()
+      return {
+        next: () => Promise.resolve(iterator.next()),
+      }
+    },
+  }
 }
 
 async function collect(
@@ -278,6 +288,49 @@ describe("responsesToChatResponse", () => {
     expect(out.choices[0].message.content).toBeNull()
   })
 
+  test("preserves current cache, reasoning, and Copilot usage metadata", () => {
+    const resp: ResponsesResponse = {
+      id: "resp_usage",
+      object: "response",
+      created_at: 1,
+      status: "completed",
+      model: "gpt-5.4-mini",
+      output: [],
+      service_tier: "default",
+      usage: {
+        input_tokens: 20,
+        output_tokens: 7,
+        total_tokens: 27,
+        input_tokens_details: {
+          cached_tokens: 8,
+          cache_write_tokens: 4,
+        },
+        output_tokens_details: { reasoning_tokens: 3 },
+      },
+      copilot_usage: {
+        token_details: [],
+        total_nano_aiu: 123,
+      },
+      copilot_info_messages: [{ code: "future_notice", message: "notice" }],
+    }
+
+    const out = responsesToChatResponse(resp)
+    expect(out.service_tier).toBe("default")
+    expect(out.usage).toEqual({
+      prompt_tokens: 20,
+      completion_tokens: 7,
+      total_tokens: 27,
+      prompt_tokens_details: {
+        cached_tokens: 8,
+        cache_creation_input_tokens: 4,
+      },
+      reasoning_tokens: 3,
+      completion_tokens_details: { reasoning_tokens: 3 },
+    })
+    expect(out.copilot_usage?.total_nano_aiu).toBe(123)
+    expect(out.copilot_info_messages?.[0]?.code).toBe("future_notice")
+  })
+
   test("incomplete status maps to length finish_reason", () => {
     const resp: ResponsesResponse = {
       id: "resp_3",
@@ -322,8 +375,18 @@ describe("responsesStreamToChatStream", () => {
           response: {
             id: "r1",
             model: "gpt-5.5",
-            usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+            usage: {
+              input_tokens: 5,
+              output_tokens: 2,
+              total_tokens: 7,
+              input_tokens_details: {
+                cached_tokens: 2,
+                cache_write_tokens: 1,
+              },
+              output_tokens_details: { reasoning_tokens: 1 },
+            },
           },
+          copilot_usage: { token_details: [], total_nano_aiu: 456 },
         }),
       },
     ])
@@ -335,7 +398,7 @@ describe("responsesStreamToChatStream", () => {
     // First content chunk should carry role assistant
     const parsed = out
       .slice(0, -1)
-      .map((d) => JSON.parse(d) as Record<string, any>)
+      .map((data) => JSON.parse(data) as ChatCompletionChunk)
     expect(parsed[0].choices[0].delta.role).toBe("assistant")
     // Concatenated content equals "hi there"
     const concatenated = parsed
@@ -350,10 +413,20 @@ describe("responsesStreamToChatStream", () => {
       parsed.some(
         (c) =>
           c.usage
-          && c.usage.prompt_tokens === 1
+          && c.usage.prompt_tokens === 5
           && c.usage.completion_tokens === 2,
       ),
     ).toBe(true)
+    const usageChunk = parsed.find((c) => c.usage)
+    if (!usageChunk?.usage) throw new Error("expected a final usage chunk")
+    expect(usageChunk.usage.prompt_tokens_details).toEqual({
+      cached_tokens: 2,
+      cache_creation_input_tokens: 1,
+    })
+    expect(usageChunk.usage.completion_tokens_details).toEqual({
+      reasoning_tokens: 1,
+    })
+    expect(usageChunk.copilot_usage?.total_nano_aiu).toBe(456)
   })
 
   test("translates function_call_arguments deltas to tool_call deltas", async () => {
@@ -368,7 +441,7 @@ describe("responsesStreamToChatStream", () => {
           output_index: 0,
           item: {
             type: "function_call",
-            id: "fc_1",
+            id: "item_1",
             call_id: "call_1",
             name: "get_weather",
             arguments: "",
@@ -380,7 +453,7 @@ describe("responsesStreamToChatStream", () => {
         event: "response.function_call_arguments.delta",
         data: JSON.stringify({
           output_index: 0,
-          call_id: "call_1",
+          item_id: "item_1",
           delta: '{"city":',
         }),
       },
@@ -388,7 +461,7 @@ describe("responsesStreamToChatStream", () => {
         event: "response.function_call_arguments.delta",
         data: JSON.stringify({
           output_index: 0,
-          call_id: "call_1",
+          item_id: "item_1",
           delta: '"NYC"}',
         }),
       },
@@ -401,23 +474,18 @@ describe("responsesStreamToChatStream", () => {
     const out = await collect(responsesStreamToChatStream(upstream, "gpt-5.5"))
     const parsed = out
       .slice(0, -1)
-      .map((d) => JSON.parse(d) as Record<string, any>)
+      .map((data) => JSON.parse(data) as ChatCompletionChunk)
     // Find the chunk that introduces the tool call (carries name + id)
     const introChunk = parsed.find(
       (c) =>
         c.choices[0].delta.tool_calls?.[0]?.function?.name === "get_weather",
     )
-    expect(introChunk).toBeDefined()
-    expect(introChunk!.choices[0].delta.tool_calls[0].id).toBe("call_1")
-    expect(introChunk!.choices[0].delta.tool_calls[0].index).toBe(0)
+    if (!introChunk) throw new Error("expected a tool call introduction chunk")
+    expect(introChunk.choices[0].delta.tool_calls?.[0]?.id).toBe("call_1")
+    expect(introChunk.choices[0].delta.tool_calls?.[0]?.index).toBe(0)
     // Concatenated arguments equal the full JSON
     const args = parsed
-      .map(
-        (c) =>
-          c.choices[0].delta.tool_calls?.[0]?.function?.arguments as
-            | string
-            | undefined,
-      )
+      .map((c) => c.choices[0].delta.tool_calls?.[0]?.function?.arguments)
       .filter((x) => typeof x === "string")
       .join("")
     expect(args).toBe('{"city":"NYC"}')
@@ -444,9 +512,11 @@ describe("responsesStreamToChatStream", () => {
     expect(out.at(-1)).toBe("[DONE]")
     const errorChunk = out
       .slice(0, -1)
-      .map((d) => JSON.parse(d) as Record<string, any>)
+      .map(
+        (data) =>
+          JSON.parse(data) as { error?: { message?: string; type?: string } },
+      )
       .find((c) => c.error)
-    expect(errorChunk).toBeDefined()
-    expect(errorChunk!.error.message).toBe("boom")
+    expect(errorChunk?.error?.message).toBe("boom")
   })
 })
