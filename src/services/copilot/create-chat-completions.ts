@@ -4,6 +4,7 @@ import { events } from "fetch-event-stream"
 import type {
   CopilotInfoMessage,
   CopilotUsage,
+  ReasoningEffort,
 } from "~/services/copilot/types-shared"
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
@@ -229,15 +230,29 @@ export interface ChatCompletionsPayload {
   temperature?: number | null
   top_p?: number | null
   max_tokens?: number | null
+  max_completion_tokens?: number | null
   stop?: string | Array<string> | null
   n?: number | null
   stream?: boolean | null
+  stream_options?: { include_usage?: boolean } | null
 
   frequency_penalty?: number | null
   presence_penalty?: number | null
   logit_bias?: Record<string, number> | null
   logprobs?: boolean | null
-  response_format?: { type: "json_object" } | null
+  response_format?:
+    | { type: "text" }
+    | { type: "json_object" }
+    | {
+        type: "json_schema"
+        json_schema: {
+          name: string
+          description?: string
+          schema: Record<string, unknown>
+          strict?: boolean
+        }
+      }
+    | null
   seed?: number | null
   tools?: Array<Tool> | null
   tool_choice?:
@@ -246,6 +261,11 @@ export interface ChatCompletionsPayload {
     | "required"
     | { type: "function"; function: { name: string } }
     | null
+  parallel_tool_calls?: boolean | null
+  reasoning_effort?: ReasoningEffort | null
+  metadata?: Record<string, string> | null
+  service_tier?: string | null
+  store?: boolean | null
   user?: string | null
 }
 

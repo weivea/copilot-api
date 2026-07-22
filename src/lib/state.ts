@@ -6,6 +6,7 @@ export interface State {
   copilotToken?: string
 
   accountType: string
+  copilotApiBaseUrl?: string
   models?: ModelsResponse
   vsCodeVersion?: string
 

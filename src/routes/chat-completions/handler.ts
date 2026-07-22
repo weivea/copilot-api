@@ -177,15 +177,15 @@ export async function handleCompletion(c: Context) {
 
   const gpt = isGptModel(payload.model)
   if (gpt) {
-    if (isNullish((payload as any).max_completion_tokens)) {
-      const limit = selectedModel?.capabilities.limits.max_output_tokens
-      ;(payload as any).max_completion_tokens = limit
+    if (isNullish(payload.max_completion_tokens)) {
+      const limit = selectedModel?.capabilities.limits?.max_output_tokens
+      payload.max_completion_tokens = limit
     }
-    delete (payload as any).max_tokens
+    delete payload.max_tokens
   } else if (isNullish(payload.max_tokens)) {
     payload = {
       ...payload,
-      max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
+      max_tokens: selectedModel?.capabilities.limits?.max_output_tokens,
     }
   }
 

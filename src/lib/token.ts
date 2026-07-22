@@ -37,16 +37,18 @@ export function bootstrapCopilotToken(): Promise<void> {
   if (inflightBootstrap) return inflightBootstrap
   inflightBootstrap = (async () => {
     stopCopilotTokenRefresh()
-    const { token, refresh_in } = await getCopilotToken()
+    const { token, refresh_in, endpoints } = await getCopilotToken()
     state.copilotToken = token
+    state.copilotApiBaseUrl = endpoints?.api
     consola.debug("GitHub Copilot Token fetched successfully!")
 
     const refreshInterval = (refresh_in - 60) * 1000
     refreshTimer = setInterval(async () => {
       consola.debug("Refreshing Copilot token")
       try {
-        const { token } = await getCopilotToken()
+        const { token, endpoints } = await getCopilotToken()
         state.copilotToken = token
+        state.copilotApiBaseUrl = endpoints?.api
         consola.debug("Copilot token refreshed")
       } catch (error) {
         // Intentionally non-fatal: keep the proxy serving with the existing
@@ -115,6 +117,7 @@ export async function clearGithubToken(): Promise<void> {
   state.githubToken = undefined
   state.githubLogin = undefined
   state.copilotToken = undefined
+  state.copilotApiBaseUrl = undefined
   state.models = undefined
   await deleteGithubTokenFile()
 }

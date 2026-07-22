@@ -4,6 +4,7 @@ import { events } from "fetch-event-stream"
 import type {
   CopilotInfoMessage,
   CopilotUsage,
+  ReasoningEffort,
 } from "~/services/copilot/types-shared"
 
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
@@ -92,9 +93,30 @@ export interface ResponsesPayload {
     | "required"
     | { type: "function"; name: string }
     | null
-  reasoning?: { effort?: "low" | "medium" | "high" } | null
+  parallel_tool_calls?: boolean | null
+  reasoning?: {
+    effort?: ReasoningEffort
+    summary?: "auto" | "concise" | "detailed" | null
+  } | null
   modalities?: Array<string> | null
   metadata?: Record<string, string> | null
+  prompt_cache_key?: string | null
+  prompt_cache_retention?: string | null
+  safety_identifier?: string | null
+  service_tier?: string | null
+  text?: {
+    format?:
+      | { type: "text" }
+      | { type: "json_object" }
+      | {
+          type: "json_schema"
+          name: string
+          description?: string
+          schema: Record<string, unknown>
+          strict?: boolean
+        }
+    verbosity?: "low" | "medium" | "high"
+  } | null
   user?: string | null
   truncation?: "auto" | "disabled" | null
 }

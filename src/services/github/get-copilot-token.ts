@@ -15,9 +15,16 @@ export const getCopilotToken = async () => {
   return (await response.json()) as GetCopilotTokenResponse
 }
 
-// Trimmed for the sake of simplicity
-interface GetCopilotTokenResponse {
+export interface GetCopilotTokenResponse {
   expires_at: number
   refresh_in: number
   token: string
+  endpoints?: {
+    api?: string
+    "origin-tracker"?: string
+    proxy?: string
+    telemetry?: string
+  }
+  individual?: boolean
+  sku?: string
 }

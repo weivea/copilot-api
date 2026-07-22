@@ -76,30 +76,50 @@ export function chatRequestToResponses(
     store: false,
   }
 
-  if (systemTexts.length > 0) out.instructions = systemTexts.join("\n\n")
-  if (chat.stream != null) out.stream = chat.stream
-  if (chat.temperature != null) out.temperature = chat.temperature
-  if (chat.top_p != null) out.top_p = chat.top_p
-  if (chat.stop != null) out.stop = chat.stop
-  if (chat.max_tokens != null) out.max_output_tokens = chat.max_tokens
-  if (chat.user != null) out.user = chat.user
-  if (chat.tool_choice != null)
-    out.tool_choice = translateToolChoice(chat.tool_choice)
-  if (chat.tools != null) out.tools = chat.tools.map(translateTool)
-
-  // Optional extension: clients (Claude Code etc.) sometimes forward
-  // reasoning_effort. Pass it through as Responses' reasoning.effort.
-  const maybeReasoning = (chat as { reasoning_effort?: string })
-    .reasoning_effort
-  if (
-    maybeReasoning === "low"
-    || maybeReasoning === "medium"
-    || maybeReasoning === "high"
-  ) {
-    out.reasoning = { effort: maybeReasoning }
-  }
+  applyResponsesOptions(chat, out, systemTexts)
 
   return out
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined
+}
+
+function applyResponsesOptions(
+  chat: ChatCompletionsPayload,
+  out: ResponsesPayload,
+  systemTexts: Array<string>,
+): void {
+  if (systemTexts.length > 0) out.instructions = systemTexts.join("\n\n")
+  if (isPresent(chat.stream)) out.stream = chat.stream
+  if (isPresent(chat.temperature)) out.temperature = chat.temperature
+  if (isPresent(chat.top_p)) out.top_p = chat.top_p
+  if (isPresent(chat.stop)) out.stop = chat.stop
+  const maxOutputTokens = chat.max_completion_tokens ?? chat.max_tokens
+  if (isPresent(maxOutputTokens)) out.max_output_tokens = maxOutputTokens
+  if (isPresent(chat.user)) out.user = chat.user
+  if (isPresent(chat.metadata)) out.metadata = chat.metadata
+  if (isPresent(chat.parallel_tool_calls))
+    out.parallel_tool_calls = chat.parallel_tool_calls
+  if (isPresent(chat.service_tier)) out.service_tier = chat.service_tier
+  if (isPresent(chat.tool_choice))
+    out.tool_choice = translateToolChoice(chat.tool_choice)
+  if (isPresent(chat.tools))
+    out.tools = chat.tools.map((tool) => translateTool(tool))
+  if (isPresent(chat.reasoning_effort))
+    out.reasoning = { effort: chat.reasoning_effort }
+  if (isPresent(chat.response_format))
+    out.text = { format: translateResponseFormat(chat.response_format) }
+}
+
+function translateResponseFormat(
+  format: NonNullable<ChatCompletionsPayload["response_format"]>,
+): NonNullable<NonNullable<ResponsesPayload["text"]>["format"]> {
+  if (format.type !== "json_schema") return format
+  return {
+    type: "json_schema",
+    ...format.json_schema,
+  }
 }
 
 function stringifyContent(content: Message["content"]): string {

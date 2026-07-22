@@ -28,3 +28,12 @@ export interface CopilotInfoMessage {
   code: "model_pending_deprecation" | (string & {})
   message: string
 }
+
+export type ReasoningEffort =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | (string & {})

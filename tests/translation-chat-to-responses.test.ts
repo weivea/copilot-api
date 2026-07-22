@@ -133,6 +133,41 @@ describe("chatRequestToResponses", () => {
     ).toBeUndefined()
   })
 
+  test("max_completion_tokens takes precedence for responses models", () => {
+    const result = chatRequestToResponses({
+      model: "gpt-5.4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 10,
+      max_completion_tokens: 20,
+    })
+    expect(result.max_output_tokens).toBe(20)
+  })
+
+  test("passes current reasoning and structured output fields", () => {
+    const result = chatRequestToResponses({
+      model: "gpt-5.5",
+      messages: [{ role: "user", content: "hello" }],
+      reasoning_effort: "xhigh",
+      parallel_tool_calls: false,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "answer",
+          schema: { type: "object" },
+          strict: true,
+        },
+      },
+    })
+    expect(result.reasoning).toEqual({ effort: "xhigh" })
+    expect(result.parallel_tool_calls).toBe(false)
+    expect(result.text?.format).toEqual({
+      type: "json_schema",
+      name: "answer",
+      schema: { type: "object" },
+      strict: true,
+    })
+  })
+
   test("tools are flattened from {function:{}} to top-level fields", () => {
     const chat: ChatCompletionsPayload = {
       model: "gpt-5.5",

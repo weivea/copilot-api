@@ -21,13 +21,16 @@ export const createEmbeddings = async (payload: EmbeddingRequest) => {
 }
 
 export interface EmbeddingRequest {
-  input: string | Array<string>
+  input: string | Array<string> | Array<number> | Array<Array<number>>
   model: string
+  dimensions?: number
+  encoding_format?: "float" | "base64"
+  user?: string
 }
 
 export interface Embedding {
   object: string
-  embedding: Array<number>
+  embedding: Array<number> | string
   index: number
 }
 

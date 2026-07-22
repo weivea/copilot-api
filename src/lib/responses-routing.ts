@@ -12,10 +12,7 @@ export function rebuildWhitelistFromModels(models: Array<Model>): void {
   for (const model of models) {
     const endpoints = model.supported_endpoints
     if (!Array.isArray(endpoints)) continue
-    if (
-      endpoints.includes("/responses")
-      && !endpoints.includes("/chat/completions")
-    ) {
+    if (endpoints.includes("/responses")) {
       next.add(model.id)
     }
   }

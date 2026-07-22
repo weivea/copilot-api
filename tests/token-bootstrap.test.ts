@@ -25,6 +25,7 @@ beforeEach(async () => {
   state.githubToken = "g"
   state.githubLogin = "octocat"
   state.copilotToken = undefined
+  state.copilotApiBaseUrl = undefined
   state.models = { data: [], object: "list" } as never
 })
 
@@ -42,7 +43,12 @@ describe("token bootstrap helpers", () => {
       calls++
       return Promise.resolve(
         new Response(
-          JSON.stringify({ token: "COP", expires_at: 0, refresh_in: 36_000 }),
+          JSON.stringify({
+            token: "COP",
+            expires_at: 0,
+            refresh_in: 36_000,
+            endpoints: { api: "https://api.enterprise.githubcopilot.com/" },
+          }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
       )
@@ -57,6 +63,9 @@ describe("token bootstrap helpers", () => {
     expect(b).toBeUndefined()
     expect(calls).toBe(1)
     expect(state.copilotToken).toBe("COP")
+    expect(state.copilotApiBaseUrl).toBe(
+      "https://api.enterprise.githubcopilot.com/",
+    )
     stopCopilotTokenRefresh()
   })
 
@@ -66,6 +75,7 @@ describe("token bootstrap helpers", () => {
     expect(state.githubToken).toBeUndefined()
     expect(state.githubLogin).toBeUndefined()
     expect(state.copilotToken).toBeUndefined()
+    expect(state.copilotApiBaseUrl).toBeUndefined()
     expect(state.models).toBeUndefined()
     const access = fs.access(PATHS.GITHUB_TOKEN_PATH)
     await expect(access).rejects.toBeDefined()
