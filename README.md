@@ -558,7 +558,7 @@ pip install certbot
 源码方式：
 
 ```sh
-# 1. 获取证书（会写入 .certs/ 与 copilot-api.config.json）
+# 1. 获取证书（写入 ~/.local/share/copilot-api/）
 bun run cert:obtain -- --domain copilot.example.com
 
 # 2. 直接启动，自动启用 HTTPS
@@ -576,27 +576,28 @@ bun run cert:renew
 ```sh
 cd release
 
-# 1. 申请证书（会写入 .certs/ 与 copilot-api.config.json）
+# 1. 首次申请证书（写入 ~/.local/share/copilot-api/）
 ./scripts/cert.sh obtain --domain copilot.example.com
 
 # 2. 重启即可，启动脚本会自动读取 copilot-api.config.json 启用 HTTPS
 ./scripts/restart.sh
 ```
 
-续期（建议放进 cron）：
+在服务器续期时，进入 release 目录直接执行（建议放进 cron）：
 
 ```sh
+cd release
 ./scripts/cert.sh renew
 ```
 
-> `cert.sh` 行为与 `cert:obtain` / `cert:renew` 等价：证书与日志放在 `<release>/.certs/` 下，并在 release 根目录写入 `copilot-api.config.json`。底层仍然依赖系统已安装 `certbot`。
+> `cert.sh` 行为与 `cert:obtain` / `cert:renew` 等价：证书与日志放在 `~/.local/share/copilot-api/certs/` 下，配置写入 `~/.local/share/copilot-api/copilot-api.config.json`。请使用首次申请证书时的同一系统用户执行；底层仍然依赖系统已安装 `certbot`。
 
 ### 配置文件
 
 读取顺序：
 
-1. 当前目录 `copilot-api.config.json`
-2. `~/.local/share/copilot-api/config.json`
+1. `~/.local/share/copilot-api/copilot-api.config.json`
+2. 当前目录 `copilot-api.config.json`
 
 示例：
 
@@ -604,13 +605,13 @@ cd release
 {
   "domain": "copilot.example.com",
   "tls": {
-    "cert": ".certs/live/copilot.example.com/fullchain.pem",
-    "key": ".certs/live/copilot.example.com/privkey.pem"
+    "cert": "/home/copilot/.local/share/copilot-api/certs/live/copilot.example.com/fullchain.pem",
+    "key": "/home/copilot/.local/share/copilot-api/certs/live/copilot.example.com/privkey.pem"
   }
 }
 ```
 
-只填 `domain` 时会按 `.certs/` 默认路径推断；CLI `--tls-cert` / `--tls-key` 优先级最高。
+只填 `domain` 时会按 `~/.local/share/copilot-api/certs/` 默认路径推断；CLI `--tls-cert` / `--tls-key` 优先级最高。
 
 ### 手动指定证书
 
