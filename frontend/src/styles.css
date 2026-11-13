@@ -36,6 +36,7 @@ input, select {
 .sidebar nav a { display: block; padding: 8px 10px; border-radius: 6px; color: var(--text); }
 .sidebar nav a.active { background: var(--bg); }
 .sidebar .spacer { flex: 1; }
+.release-version { color: var(--muted); font-size: 12px; padding: 8px 0; overflow-wrap: anywhere; }
 .main { flex: 1; padding: 24px; overflow: auto; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }

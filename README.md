@@ -69,6 +69,7 @@ print(response.choices[0].message.content)
 
 ### Web Dashboard（新）
 - **静态 SPA**：基于 React + Vite + Recharts，构建产物随 `bun run build` 一并生成，由后端直接托管。
+- **Release 版本**：登录页和登录后的侧栏显示当前部署包的版本号，也可通过侧边导航栏的 **Version** 打开 `/version` 页面查看。构建时从根目录 `package.json` 自动读取，与 release 包名一致。
 - **登录 / 我 / 退出**：`POST /admin/api/login`、`GET /admin/api/me`、`POST /admin/api/logout`，支持 1 / 7 / 30 天 TTL。
 - **Token 管理页**：列表、创建（明文仅显示一次）、改名/限额、禁用、删除、月度/终身计数重置（按角色限制操作）。
 - **Usage 页**：按 Me / 全部 / 单 token 切换；支持 hour/day/week/month 桶、Recharts 趋势图、最近请求列表、按 token 汇总。
