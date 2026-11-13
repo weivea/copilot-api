@@ -38,6 +38,10 @@ const TRACKED_ENDPOINT_PREFIXES = [
   "/responses",
   "/v1/decisions",
   "/decisions",
+  "/v1/images/generations",
+  "/images/generations",
+  "/v1/images/edits",
+  "/images/edits",
 ] as const
 
 function isTrackedEndpoint(path: string): boolean {

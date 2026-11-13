@@ -16,6 +16,7 @@ const SECTIONS: Array<Section> = [
   { id: "openai", title: "OpenAI-compatible Endpoints" },
   { id: "responses", title: "Responses API" },
   { id: "decisions", title: "Decisions API" },
+  { id: "images", title: "Images API" },
   { id: "anthropic", title: "Anthropic-compatible Endpoints" },
   { id: "claude-code", title: "Claude Code Setup" },
   { id: "notes", title: "Notes & Limits" },
@@ -79,6 +80,34 @@ const ENDPOINTS: Array<EndpointRow> = [
     family: "OpenAI",
     auth: "Bearer",
     purpose: "Same as above — /v1 alias for the Decisions API.",
+  },
+  {
+    method: "POST",
+    path: "/images/generations",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Generate images from a JSON prompt.",
+  },
+  {
+    method: "POST",
+    path: "/v1/images/generations",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Same as above — /v1 alias for image generation.",
+  },
+  {
+    method: "POST",
+    path: "/images/edits",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Edit images using multipart uploads or JSON image references.",
+  },
+  {
+    method: "POST",
+    path: "/v1/images/edits",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Same as above — /v1 alias for image editing.",
   },
   {
     method: "GET",
@@ -309,6 +338,33 @@ export function Docs() {
 
   const openaiModels = `curl ${baseUrl}/v1/models \\
   -H "authorization: Bearer ${tokenPlaceholder}"`
+
+  const imageGeneration = `curl ${baseUrl}/v1/images/generations \\
+  -H "authorization: Bearer ${tokenPlaceholder}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "gpt-image-2.5-flare",
+    "prompt": "A small blue robot watering a plant",
+    "size": "1024x1024",
+    "quality": "low",
+    "output_format": "png"
+  }'`
+
+  const imageEdit = `curl ${baseUrl}/v1/images/edits \\
+  -H "authorization: Bearer ${tokenPlaceholder}" \\
+  -F "model=gpt-image-2.5-flare" \\
+  -F "image[]=@source.png" \\
+  -F "prompt=Change the background to a sunny garden" \\
+  -F "output_format=png"`
+
+  const imageJsonEdit = `curl ${baseUrl}/v1/images/edits \\
+  -H "authorization: Bearer ${tokenPlaceholder}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "gpt-image-2.5-flare",
+    "prompt": "Change the background to a sunny garden",
+    "images": [{"image_url": "data:image/png;base64,REPLACE_WITH_IMAGE_BASE64"}]
+  }'`
 
   const openaiEmbeddings = `curl ${baseUrl}/v1/embeddings \\
   -H "authorization: Bearer ${tokenPlaceholder}" \\
@@ -638,6 +694,73 @@ print(resp.choices[0].message.content)`
                 not send its payload to <code>/v1/decisions</code>.
               </li>
             </ul>
+          </section>
+
+          <section id="images">
+            <h2>Images API</h2>
+            <p>
+              Generate images at <code>/v1/images/generations</code> and edit
+              them at <code>/v1/images/edits</code>. Both also have unversioned
+              aliases under <code>/images</code>. Requests go directly to the
+              corresponding Copilot endpoints, not through Chat Completions.
+            </p>
+            <p>
+              Choose a model with the corresponding endpoint in{" "}
+              <code>supported_endpoints</code> on the{" "}
+              <a href="/copilot-models">Models</a> page. The live catalog
+              advertises <code>gpt-image-2.5-flare</code> for both endpoints.
+              Preview availability, organization policy, parameters, and
+              streaming support are ultimately controlled by Copilot.
+            </p>
+            <h3>Generate an image</h3>
+            <CodeBlock code={imageGeneration} />
+            <p>
+              Supply <code>model</code> and a non-empty <code>prompt</code>.
+              Optional settings such as <code>size</code>, <code>quality</code>,
+              <code>n</code>, and <code>output_format</code> are forwarded as
+              supplied. Omitted settings use upstream defaults.
+            </p>
+            <h3>Edit uploaded images</h3>
+            <CodeBlock code={imageEdit} />
+            <p>
+              Upload one file with <code>image</code> or repeat{" "}
+              <code>image[]</code> for multiple references. An optional{" "}
+              <code>mask</code> file can select the edit region. Do not manually
+              set the multipart Content-Type: your client must include the
+              correct boundary.
+            </p>
+            <h3>Edit JSON image references</h3>
+            <CodeBlock code={imageJsonEdit} />
+            <p>
+              JSON edits use an <code>images</code> array with one{" "}
+              <code>image_url</code> (URL or base64 data URL) or upstream{" "}
+              <code>file_id</code> per image. JSON <code>mask</code> uses the
+              same reference format. This proxy does not implement file uploads
+              or fetch remote image URLs itself.
+            </p>
+            <h3>Results, streaming, and billing</h3>
+            <p>
+              JSON results retain <code>data[].b64_json</code> (decode it to
+              save the image), URLs when returned, token <code>usage</code>, and
+              upstream extension fields. The proxy does not store generated
+              images or invent download URLs.
+            </p>
+            <p>
+              When supported upstream, set <code>stream: true</code> in JSON or{" "}
+              <code>-F &quot;stream=true&quot;</code> in multipart, optionally
+              with <code>partial_images</code>. SSE events such as{" "}
+              <code>image_generation.partial_image</code>,{" "}
+              <code>image_generation.completed</code>, and their{" "}
+              <code>image_edit</code> equivalents are forwarded. Stream errors
+              and incomplete streams are reported, not converted into success.
+            </p>
+            <p>
+              Use your proxy API token. Existing authentication, rate limits,
+              quotas, token usage, and Copilot cost accounting apply. GitHub
+              bills image generation separately from the chat model using image
+              tokens and AI credits; listing a model does not guarantee
+              permission to generate. Image variations are not implemented.
+            </p>
           </section>
 
           <section id="anthropic">

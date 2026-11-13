@@ -57,9 +57,10 @@ print(response.choices[0].message.content)
 - 支持 `POST /v1/responses`，包括 `input` 字符串和 `input=[{"role": "user", "content": "..."}]` 简写。仅支持 Responses 的模型会自动转换为 Chat Completions 格式供现有客户端使用；这条转换路径只支持 `n=1`，对无法转换的 `seed`、`logit_bias`、`thinking_budget`、`logprobs: true` 明确返回 `400`。
 - Responses 的 `store`、`background`、`previous_response_id` 按原值透传，由 Copilot 决定支持情况，代理不自行禁用或覆盖；省略的选项也不会被补写。实测当前账号的 `gpt-5.3-codex` 拒绝 `store: true` 和 `previous_response_id`，应在 `input` 中携带历史。
 - 支持 `POST /v1/decisions`（也可用 `/decisions`），直连 Copilot `/v1/decisions`，支持 `predicate`、`choice`、`score` 问题，返回上游 `answers`、概率、usage 和扩展字段，不转换成聊天文本、不支持 SSE。请求使用代理 token，纳入现有鉴权、配额和使用统计。
+- 支持 `POST /v1/images/generations` 生图和 `POST /v1/images/edits` 编辑（也可用 `/images/...`），支持 JSON、编辑文件上传和上游 SSE 事件，保留图片结果、usage 与 Copilot 计费字段，复用现有鉴权和配额。
 - embeddings 按客户端指定的 `encoding_format` 返回浮点数组或 float32 little-endian 的 Base64 字符串；即使上游忽略该选项，代理也会转换输出格式。
 - 错误采用 OpenAI 风格的 `error.message/type/param/code`，保留上游错误码及 `Retry-After`。无效 JSON / 已校验字段返回 `400`；未知 API 路径返回 JSON `404`，不会误返回 Dashboard HTML。
-- 兼容范围限定为 `POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/decisions`、`GET /v1/models`、`POST /v1/embeddings`。具体模型的参数、工具、图片、结构化输出和 embeddings 能力以 Copilot 上游为准，不额外实现音频、文件、Batch、Assistants 等其他产品接口。
+- 兼容范围限定为 `POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/decisions`、`POST /v1/images/generations`、`POST /v1/images/edits`、`GET /v1/models`、`POST /v1/embeddings`。具体模型的参数、工具、图片、结构化输出和 embeddings 能力以 Copilot 上游为准，不额外实现音频、文件、Batch、Assistants 等其他产品接口。
 
 #### Decisions API
 
@@ -83,6 +84,35 @@ curl http://localhost:4141/v1/decisions \
 将 `YOUR_DECISION_MODEL_ID` 替换为当前账号模型目录中的实际决策模型 ID，不要仅根据展示名称推断 ID 或把普通聊天模型强行替换成决策模型。`/v1/models` 出现模型不保证账号有推理权限；可在后台模型页查看完整的上游能力信息。账号权限、模型名和参数是否受支持最终由上游校验，失败会保留 HTTP 状态、错误信息和重试头。
 
 鉴权仍复用本项目的 GitHub OAuth → Copilot token 流程，不直接向上游传递客户端的代理 token。已有 [PAT 被该端点拒绝的报告](https://github.com/github/gh-aw/issues/75637)；本接口的加入不意味着所有 Copilot 订阅或凭据都已开放 Decisions，部署后需用自己的账号确认可用性。
+
+#### Images API
+
+[GitHub 已发布图片生成与编辑预览](https://github.blog/changelog/2026-10-28-generate-and-edit-images-directly-in-copilot/)。实时模型目录中的 `gpt-image-2.5-flare` 标注支持 `/v1/images/generations` 和 `/v1/images/edits`，代理使用对应路径直连上游。模型是否可用仍受账号权限和组织策略约束。
+
+```sh
+curl http://localhost:4141/v1/images/generations \
+  -H "Authorization: Bearer YOUR_PROXY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2.5-flare",
+    "prompt": "A small blue robot watering a plant",
+    "size": "1024x1024",
+    "quality": "low",
+    "output_format": "png"
+  }'
+
+curl http://localhost:4141/v1/images/edits \
+  -H "Authorization: Bearer YOUR_PROXY_TOKEN" \
+  -F "model=gpt-image-2.5-flare" \
+  -F "image[]=@source.png" \
+  -F "prompt=Change the background to a sunny garden"
+```
+
+编辑支持 `image` 单文件、重复的 `image[]` 多文件和可选 `mask` 文件，不要手动设置 multipart 的 Content-Type。也支持 [OpenAI JSON 编辑格式](https://developers.openai.com/api/reference/resources/images/methods/edit)：`images: [{ image_url: "data:image/png;base64,..." }]`，每个引用也可换成上游有效的 `file_id`；代理不实现 Files API，也不会自行下载 URL。
+
+`model`、非空 `prompt` 必填；尺寸、质量、张数等可选参数和扩展字段原样透传，省略时不补写。结果保留 `data[].b64_json`（解码后保存为图片）、上游返回的 URL、usage、计费与扩展字段，代理不存储图片或伪造下载地址。上游支持时可用 `stream: true`（multipart 用 `stream=true`）和 `partial_images` 获取 `image_generation` / `image_edit` SSE 事件；异常或未完成的流会明确报错。
+
+图片 token 纳入现有使用统计和配额，Copilot 返回的 nano-AIU 计费字段会被记录。GitHub 对生图单独按图片 token 消耗 AI credits，实际消耗可能高于文本请求。暂不实现 `/v1/images/variations`；完整示例也可在 Dashboard `/docs` 查看。
 
 ### 多 token 鉴权与配额（新）
 - **三级角色模型**：`super`（超级管理员，文件存储）/ `admin`（管理员，可管理普通 token）/ `user`（仅可查看自身）。

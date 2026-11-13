@@ -23,6 +23,29 @@ export async function readJson(c: Context): Promise<unknown> {
   }
 }
 
+export const imageGenerationRequestSchema = z.looseObject({
+  model: z.string().refine((value) => value.trim().length > 0),
+  prompt: z.string().refine((value) => value.trim().length > 0),
+  stream: z.boolean().nullish(),
+})
+
+const imageReference = z
+  .looseObject({
+    image_url: z.string().min(1).optional(),
+    file_id: z.string().min(1).optional(),
+  })
+  .refine(
+    (value) => Boolean(value.image_url) !== Boolean(value.file_id),
+    "provide exactly one of image_url or file_id",
+  )
+
+export const imageEditRequestSchema = imageGenerationRequestSchema.extend({
+  images: z.array(imageReference).min(1),
+  mask: imageReference.nullish(),
+})
+
+export type ImagesPayload = z.infer<typeof imageGenerationRequestSchema>
+
 const decisionContentPart = z.looseObject({ type: z.string() })
 const decisionInstructions = z.union([
   z
