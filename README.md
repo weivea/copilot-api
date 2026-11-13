@@ -56,9 +56,33 @@ print(response.choices[0].message.content)
 - 流式请求只有设置 `stream_options={"include_usage": True}` 才向客户端输出 usage；普通 chunk 的 `usage` 为 `null`，统计信息单独放在 `choices: []` 的 chunk 中。上游流异常或提前关闭会返回错误，不伪造正常完成。
 - 支持 `POST /v1/responses`，包括 `input` 字符串和 `input=[{"role": "user", "content": "..."}]` 简写。仅支持 Responses 的模型会自动转换为 Chat Completions 格式供现有客户端使用；这条转换路径只支持 `n=1`，对无法转换的 `seed`、`logit_bias`、`thinking_budget`、`logprobs: true` 明确返回 `400`。
 - Responses 的 `store`、`background`、`previous_response_id` 按原值透传，由 Copilot 决定支持情况，代理不自行禁用或覆盖；省略的选项也不会被补写。实测当前账号的 `gpt-5.3-codex` 拒绝 `store: true` 和 `previous_response_id`，应在 `input` 中携带历史。
+- 支持 `POST /v1/decisions`（也可用 `/decisions`），直连 Copilot `/v1/decisions`，支持 `predicate`、`choice`、`score` 问题，返回上游 `answers`、概率、usage 和扩展字段，不转换成聊天文本、不支持 SSE。请求使用代理 token，纳入现有鉴权、配额和使用统计。
 - embeddings 按客户端指定的 `encoding_format` 返回浮点数组或 float32 little-endian 的 Base64 字符串；即使上游忽略该选项，代理也会转换输出格式。
 - 错误采用 OpenAI 风格的 `error.message/type/param/code`，保留上游错误码及 `Retry-After`。无效 JSON / 已校验字段返回 `400`；未知 API 路径返回 JSON `404`，不会误返回 Dashboard HTML。
-- 兼容范围限定为 `POST /v1/chat/completions`、`POST /v1/responses`、`GET /v1/models`、`POST /v1/embeddings`。具体模型的参数、工具、图片、结构化输出和 embeddings 能力以 Copilot 上游为准，不额外实现音频、文件、Batch、Assistants 等其他产品接口。
+- 兼容范围限定为 `POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/decisions`、`GET /v1/models`、`POST /v1/embeddings`。具体模型的参数、工具、图片、结构化输出和 embeddings 能力以 Copilot 上游为准，不额外实现音频、文件、Batch、Assistants 等其他产品接口。
+
+#### Decisions API
+
+GitHub 官方 [gh-aw 调用实现](https://github.com/github/gh-aw/blob/main/actions/setup/js/decisions_client.cjs)已使用 Copilot `/v1/decisions`，协议为 `{ model, input, questions }`，与 [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) 的类型化决策格式一致；它不同于 Auto 模式的模型选择器，也不是 Microsoft Foundry 的 `systemone` 接口。
+
+```sh
+curl http://localhost:4141/v1/decisions \
+  -H "Authorization: Bearer YOUR_PROXY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "YOUR_DECISION_MODEL_ID",
+    "input": "The API returns 500 on every call.",
+    "questions": [{
+      "type": "predicate",
+      "name": "is_outage",
+      "instructions": "Does this report describe a service outage?"
+    }]
+  }'
+```
+
+将 `YOUR_DECISION_MODEL_ID` 替换为当前账号模型目录中的实际决策模型 ID，不要仅根据展示名称推断 ID 或把普通聊天模型强行替换成决策模型。`/v1/models` 出现模型不保证账号有推理权限；可在后台模型页查看完整的上游能力信息。账号权限、模型名和参数是否受支持最终由上游校验，失败会保留 HTTP 状态、错误信息和重试头。
+
+鉴权仍复用本项目的 GitHub OAuth → Copilot token 流程，不直接向上游传递客户端的代理 token。已有 [PAT 被该端点拒绝的报告](https://github.com/github/gh-aw/issues/75637)；本接口的加入不意味着所有 Copilot 订阅或凭据都已开放 Decisions，部署后需用自己的账号确认可用性。
 
 ### 多 token 鉴权与配额（新）
 - **三级角色模型**：`super`（超级管理员，文件存储）/ `admin`（管理员，可管理普通 token）/ `user`（仅可查看自身）。

@@ -48,6 +48,7 @@ const PROTECTED_PREFIXES = [
   "/models",
   "/embeddings",
   "/responses",
+  "/decisions",
   "/v1/",
 ]
 // Endpoints that ONLY the super admin may call. Must also appear in

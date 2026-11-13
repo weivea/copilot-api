@@ -15,6 +15,7 @@ const SECTIONS: Array<Section> = [
   { id: "endpoints", title: "API Endpoints" },
   { id: "openai", title: "OpenAI-compatible Endpoints" },
   { id: "responses", title: "Responses API" },
+  { id: "decisions", title: "Decisions API" },
   { id: "anthropic", title: "Anthropic-compatible Endpoints" },
   { id: "claude-code", title: "Claude Code Setup" },
   { id: "notes", title: "Notes & Limits" },
@@ -63,6 +64,21 @@ const ENDPOINTS: Array<EndpointRow> = [
     family: "OpenAI",
     auth: "Bearer",
     purpose: "Same as above — /v1 alias for OpenAI SDKs.",
+  },
+  {
+    method: "POST",
+    path: "/decisions",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose:
+      "Typed decisions: predicates, choices, and scores (non-streaming).",
+  },
+  {
+    method: "POST",
+    path: "/v1/decisions",
+    family: "OpenAI",
+    auth: "Bearer",
+    purpose: "Same as above — /v1 alias for the Decisions API.",
   },
   {
     method: "GET",
@@ -248,6 +264,48 @@ export function Docs() {
     "input": "Count from one to five.",
     "stream": true
   }'`
+
+  const openaiDecisions = `curl ${baseUrl}/v1/decisions \\
+  -H "authorization: Bearer ${tokenPlaceholder}" \\
+  -H "content-type: application/json" \\
+  -d '{
+    "model": "gpt-6-luna-decisions",
+    "input": "The checkout API returns HTTP 500 for every customer. All purchases are blocked.",
+    "questions": [
+      {
+        "type": "predicate",
+        "name": "is_outage",
+        "instructions": "Does this report describe a service outage?"
+      },
+      {
+        "type": "choice",
+        "name": "team",
+        "instructions": "Which team should handle this incident?",
+        "choices": [
+          {"value": "engineering", "description": "Bugs and outages"},
+          {"value": "billing", "description": "Invoices and refunds"}
+        ]
+      },
+      {
+        "type": "score",
+        "name": "severity",
+        "instructions": "How severe is this incident?",
+        "levels": [
+          {"label": "minor", "description": "Cosmetic issue"},
+          {"label": "critical", "description": "Purchases blocked for everyone"}
+        ]
+      }
+    ]
+  }'`
+
+  const decisionsResponse = `{
+  "model": "gpt-6-luna",
+  "answers": [
+    {"type": "predicate", "name": "is_outage", "probability": 1},
+    {"type": "choice", "name": "team", "choice": "engineering", "confidence": 1},
+    {"type": "score", "name": "severity", "score": 1, "confidence": 1}
+  ]
+}`
 
   const openaiModels = `curl ${baseUrl}/v1/models \\
   -H "authorization: Bearer ${tokenPlaceholder}"`
@@ -497,6 +555,89 @@ print(resp.choices[0].message.content)`
               rejected with <code>400 invalid_request_error</code>; forwarded
               requests always use <code>store: false</code>.
             </p>
+          </section>
+
+          <section id="decisions">
+            <h2>Decisions API</h2>
+            <p>
+              Available at <code>/decisions</code> and{" "}
+              <code>/v1/decisions</code>. This endpoint forwards structured
+              decision requests directly to Copilot&apos;s{" "}
+              <code>/v1/decisions</code>, without converting them into chat
+              completions. It is not the Auto model router.
+            </p>
+            <p>
+              Select a model whose <code>supported_endpoints</code> includes{" "}
+              <code>/v1/decisions</code> on the{" "}
+              <a href="/copilot-models">Models</a> page. The model{" "}
+              <code>gpt-6-luna-decisions</code> was successfully tested through
+              this proxy against live Copilot on November 13, 2026. Availability
+              still depends on the connected account and upstream policy.
+            </p>
+
+            <h3>Request</h3>
+            <p>
+              Supply <code>model</code>, shared evidence in <code>input</code>,
+              and an array of <code>questions</code>. Use your proxy API token,
+              not a GitHub token.
+            </p>
+            <CodeBlock code={openaiDecisions} />
+
+            <h3>Question types</h3>
+            <ul>
+              <li>
+                <code>predicate</code>: returns a <code>probability</code> from
+                0 to 1 that the condition is true.
+              </li>
+              <li>
+                <code>choice</code>: selects one of 2–255 distinct string or
+                boolean values in <code>choices</code>, with option
+                probabilities.
+              </li>
+              <li>
+                <code>score</code>: evaluates 2–10 ordered <code>levels</code>.
+                The score is the probability-weighted average of their
+                zero-based indices, not a free-form explanation.
+              </li>
+            </ul>
+
+            <h3>Response excerpt</h3>
+            <CodeBlock code={decisionsResponse} />
+            <p>
+              Match answers by <code>name</code>. Copilot may return the
+              underlying model ID (<code>gpt-6-luna</code>) instead of the
+              requested decision-model ID. Full responses also preserve
+              probabilities, token <code>usage</code>, Copilot billing metadata
+              when present, and upstream extension fields. A refused question
+              may return an answer with <code>type: &quot;refusal&quot;</code>.
+            </p>
+
+            <h3>Limits and protocol differences</h3>
+            <ul>
+              <li>
+                Send 1–400 questions with unique, non-empty names and non-empty
+                instructions. Input may be text or supported conversation items,
+                including image and JSON content parts.
+              </li>
+              <li>
+                Non-streaming only: omit <code>stream</code> or set it to{" "}
+                <code>false</code>. Requests use the existing authentication,
+                rate limits, token quotas, and usage accounting.
+              </li>
+              <li>
+                Listing a model does not guarantee inference permission.
+                Upstream errors retain their HTTP status, message, error code,
+                and retry headers.
+              </li>
+              <li>
+                <code>microsoft-decision-1</code> uses a different upstream
+                endpoint, <code>/v1/systemone</code>, with <code>state</code>, a
+                named <code>questions</code> object, and question types such as{" "}
+                <code>noul</code>. That upstream endpoint was also tested
+                successfully, but is not currently proxied by this server. Do
+                not send its payload to <code>/v1/decisions</code>.
+              </li>
+            </ul>
           </section>
 
           <section id="anthropic">

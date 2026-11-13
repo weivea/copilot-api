@@ -36,6 +36,8 @@ const TRACKED_ENDPOINT_PREFIXES = [
   "/embeddings",
   "/v1/responses",
   "/responses",
+  "/v1/decisions",
+  "/decisions",
 ] as const
 
 function isTrackedEndpoint(path: string): boolean {
