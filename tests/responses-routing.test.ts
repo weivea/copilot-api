@@ -46,7 +46,7 @@ describe("responses-routing", () => {
     expect(shouldUseResponsesEndpoint("gpt-4o")).toBe(false)
   })
 
-  test("dual-stack models prefer the responses endpoint", () => {
+  test("dual-stack models keep native Chat Completions semantics", () => {
     rebuildWhitelistFromModels([
       makeModel("gpt-5.4", [
         "/responses",
@@ -54,7 +54,7 @@ describe("responses-routing", () => {
         "ws:/responses",
       ]),
     ])
-    expect(shouldUseResponsesEndpoint("gpt-5.4")).toBe(true)
+    expect(shouldUseResponsesEndpoint("gpt-5.4")).toBe(false)
   })
 
   test("recordResponsesOnlyModel adds to runtime cache", () => {

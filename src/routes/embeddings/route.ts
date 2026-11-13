@@ -1,21 +1,28 @@
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
-import { recordUsage } from "~/lib/usage-recorder"
 import {
-  createEmbeddings,
-  type EmbeddingRequest,
-} from "~/services/copilot/create-embeddings"
+  embeddingsRequestSchema,
+  invalidRequest,
+  readJson,
+} from "~/lib/openai-request"
+import { recordUsage } from "~/lib/usage-recorder"
+import { createEmbeddings } from "~/services/copilot/create-embeddings"
 
 export const embeddingRoutes = new Hono()
 
 embeddingRoutes.post("/", async (c) => {
   try {
-    const payload = await c.req.json<EmbeddingRequest>()
+    const parsed = embeddingsRequestSchema.safeParse(await readJson(c))
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      throw invalidRequest(issue.message, issue.path.join("."))
+    }
+    const payload = parsed.data
     const response = await createEmbeddings(payload)
 
     recordUsage(c, {
-      model: response.model ?? payload.model,
+      model: response.model,
       promptTokens: response.usage.prompt_tokens,
       completionTokens: null,
       totalTokens: response.usage.total_tokens,

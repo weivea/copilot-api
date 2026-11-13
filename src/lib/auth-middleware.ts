@@ -47,6 +47,7 @@ const PROTECTED_PREFIXES = [
   "/chat/completions",
   "/models",
   "/embeddings",
+  "/responses",
   "/v1/",
 ]
 // Endpoints that ONLY the super admin may call. Must also appear in

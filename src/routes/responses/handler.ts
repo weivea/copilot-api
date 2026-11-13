@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 
 import consola from "consola"
+import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 
 import {
@@ -8,6 +9,7 @@ import {
   pickCostNanoAiu,
 } from "~/lib/copilot-info-messages"
 import { HTTPError } from "~/lib/error"
+import { invalidRequest, readJson } from "~/lib/openai-request"
 import { deferUsage, flushUsage, recordUsage } from "~/lib/usage-recorder"
 import {
   createResponses,
@@ -59,7 +61,25 @@ function captureFromCompletedEvent(
 const requestSchema = z
   .object({
     model: z.string().min(1),
-    input: z.union([z.string(), z.array(z.any())]),
+    input: z.union([
+      z.string(),
+      z.array(
+        z.looseObject({
+          type: z.string().optional(),
+          role: z.enum(["user", "assistant", "system", "developer"]).optional(),
+          content: z
+            .union([
+              z.string(),
+              z.array(
+                z.looseObject({
+                  type: z.string(),
+                }),
+              ),
+            ])
+            .optional(),
+        }),
+      ),
+    ]),
     background: z.boolean().nullish(),
     include: z.array(z.string()).nullish(),
     instructions: z.string().nullish(),
@@ -90,59 +110,32 @@ const requestSchema = z
   .loose()
 
 export async function handleResponses(c: Context) {
-  const raw = await c.req.json<unknown>()
+  const raw = await readJson(c)
   const parsed = requestSchema.safeParse(raw)
   if (!parsed.success) {
-    return c.json(
-      {
-        error: {
-          message: `Invalid /v1/responses payload: ${parsed.error.message}`,
-          type: "invalid_request_error",
-        },
-      },
-      400,
+    const issue = parsed.error.issues[0]
+    throw invalidRequest(
+      `Invalid /v1/responses payload: ${issue.message}`,
+      issue.path.join("."),
     )
   }
 
-  const body = parsed.data
-  if (body.previous_response_id) {
-    return c.json(
-      {
-        error: {
-          message:
-            "previous_response_id is not supported by this proxy (server-side conversation state is disabled)",
-          type: "invalid_request_error",
-        },
-      },
-      400,
-    )
-  }
-  if (body.store === true || body.background === true) {
-    const field = body.background === true ? "background" : "store"
-    return c.json(
-      {
-        error: {
-          message: `${field}: true is not supported by this stateless proxy`,
-          type: "invalid_request_error",
-        },
-      },
-      400,
-    )
-  }
-
-  // Force store: false; we don't want Copilot to retain state on our behalf.
-  const payload: ResponsesPayload = {
-    ...(body as ResponsesPayload),
-    store: false,
-  }
+  const payload = parsed.data as ResponsesPayload
 
   const upstreamController = new AbortController()
   const onAbort = () => upstreamController.abort()
   c.req.raw.signal.addEventListener("abort", onAbort, { once: true })
 
-  const upstream = await createResponses(payload, {
-    signal: upstreamController.signal,
-  })
+  if (c.req.raw.signal.aborted) upstreamController.abort()
+  let upstream: Awaited<ReturnType<typeof createResponses>>
+  try {
+    upstream = await createResponses(payload, {
+      signal: upstreamController.signal,
+    })
+  } catch (error) {
+    c.req.raw.signal.removeEventListener("abort", onAbort)
+    throw error
+  }
 
   if (payload.stream) {
     const capture: StreamCaptureState = {
@@ -153,57 +146,67 @@ export async function handleResponses(c: Context) {
     deferUsage(c)
 
     // Pass-through SSE: serialise each event back into the SSE wire format.
-    return new Response(
-      new ReadableStream({
-        async start(controller) {
-          const encoder = new TextEncoder()
-          try {
-            for await (const evt of upstream as AsyncIterable<{
-              event?: string
-              data?: string
-              id?: string
-              retry?: number
-            }>) {
-              captureFromCompletedEvent(evt, capture)
-              if (evt.id !== undefined)
-                controller.enqueue(encoder.encode(`id: ${evt.id}\n`))
-              if (evt.event)
-                controller.enqueue(encoder.encode(`event: ${evt.event}\n`))
-              if (evt.retry !== undefined)
-                controller.enqueue(encoder.encode(`retry: ${evt.retry}\n`))
-              if (evt.data !== undefined)
-                controller.enqueue(encoder.encode(`data: ${evt.data}\n\n`))
+    return streamSSE(
+      c,
+      async (stream) => {
+        stream.onAbort(onAbort)
+        let terminal = false
+        try {
+          for await (const evt of upstream as AsyncIterable<{
+            event?: string
+            data?: string
+            id?: string
+            retry?: number
+          }>) {
+            if (upstreamController.signal.aborted) break
+            captureFromCompletedEvent(evt, capture)
+            if (
+              [
+                "error",
+                "response.completed",
+                "response.error",
+                "response.failed",
+                "response.incomplete",
+              ].includes(evt.event ?? "")
+            ) {
+              terminal = true
             }
-          } catch (error) {
-            consola.error("Upstream /responses stream failed:", error)
-            const message =
-              error instanceof Error ? error.message : String(error)
-            controller.enqueue(
-              encoder.encode(
-                `event: response.error\ndata: ${JSON.stringify({ error: { message } })}\n\n`,
-              ),
-            )
-          } finally {
-            c.req.raw.signal.removeEventListener("abort", onAbort)
-            recordUsage(c, {
-              model: capture.model,
-              promptTokens: capture.usage.input || null,
-              completionTokens: capture.usage.output || null,
-              totalTokens: capture.usage.total || null,
-              costNanoAiu: capture.cost,
-            })
-            flushUsage(c)
-            controller.close()
+            if (evt.data !== undefined)
+              await stream.writeSSE({ ...evt, data: evt.data })
           }
-        },
-      }),
-      {
-        status: 200,
-        headers: {
-          "content-type": "text/event-stream; charset=utf-8",
-          "cache-control": "no-cache",
-          connection: "keep-alive",
-        },
+          if (!terminal && !upstreamController.signal.aborted)
+            throw new Error(
+              "Upstream Responses stream ended before a terminal event",
+            )
+        } catch (error) {
+          consola.error("Upstream /responses stream failed:", error)
+          const message = error instanceof Error ? error.message : String(error)
+          if (!upstreamController.signal.aborted)
+            await stream.writeSSE({
+              event: "error",
+              data: JSON.stringify({
+                type: "error",
+                code: "upstream_error",
+                message,
+                param: null,
+              }),
+            })
+        } finally {
+          upstreamController.abort()
+          c.req.raw.signal.removeEventListener("abort", onAbort)
+          recordUsage(c, {
+            model: capture.model,
+            promptTokens: capture.usage.input || null,
+            completionTokens: capture.usage.output || null,
+            totalTokens: capture.usage.total || null,
+            costNanoAiu: capture.cost,
+          })
+          flushUsage(c)
+        }
+      },
+      (error) => {
+        consola.error("Responses stream write failed:", error)
+        return Promise.resolve()
       },
     )
   }

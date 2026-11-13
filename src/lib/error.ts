@@ -34,11 +34,24 @@ function errorMessage(error: unknown): string {
   }
 }
 
+function upstreamError(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || !("error" in value))
+    return {}
+  if (typeof value.error !== "object" || value.error === null) return {}
+  return value.error as Record<string, unknown>
+}
+
+function errorType(status: number): string {
+  if (status === 429) return "rate_limit_error"
+  if (status < 500) return "invalid_request_error"
+  return "api_error"
+}
+
 export function forwardError(c: Context, error: unknown) {
   consola.error("Error occurred:", error)
 
   if (error instanceof HTTPError) {
-    const errorText = error.bodyText || "Unknown error"
+    const errorText = error.bodyText || error.message
     let errorJson: unknown
     try {
       errorJson = JSON.parse(errorText)
@@ -49,24 +62,26 @@ export function forwardError(c: Context, error: unknown) {
     // Prefer the upstream-provided structured error message when available
     // so the client sees something useful (e.g. rate-limit details), and
     // fall back to the raw body otherwise.
-    const upstreamMessage =
-      (
-        typeof errorJson === "object"
-        && errorJson !== null
-        && "error" in errorJson
-        && typeof (errorJson as { error?: { message?: unknown } }).error
-          ?.message === "string"
-      ) ?
-        (errorJson as { error: { message: string } }).error.message
-      : errorText
+    const upstream = upstreamError(errorJson)
+    const status = safeStatus(error.response.status)
+    for (const header of ["retry-after", "x-request-id"]) {
+      const value = error.response.headers.get(header)
+      if (value) c.header(header, value)
+    }
     return c.json(
       {
         error: {
-          message: upstreamMessage,
-          type: "error",
+          message:
+            typeof upstream.message === "string" ? upstream.message : errorText,
+          type:
+            typeof upstream.type === "string" ?
+              upstream.type
+            : errorType(status),
+          param: typeof upstream.param === "string" ? upstream.param : null,
+          code: typeof upstream.code === "string" ? upstream.code : null,
         },
       },
-      safeStatus(error.response.status),
+      status,
     )
   }
 
@@ -74,7 +89,9 @@ export function forwardError(c: Context, error: unknown) {
     {
       error: {
         message: errorMessage(error),
-        type: "error",
+        type: "api_error",
+        param: null,
+        code: null,
       },
     },
     500,

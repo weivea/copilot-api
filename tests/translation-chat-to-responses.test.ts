@@ -34,6 +34,68 @@ async function collect(
 }
 
 describe("chatRequestToResponses", () => {
+  test.each([true, false])(
+    "preserves explicit store=%s when changing endpoints",
+    (store) => {
+      const result = chatRequestToResponses({
+        model: "gpt-test",
+        messages: [{ role: "user", content: "hi" }],
+        store,
+      })
+      expect(result.store).toBe(store)
+    },
+  )
+
+  test("preserves assistant history, strict tools, and image detail", () => {
+    const result = chatRequestToResponses({
+      model: "gpt-test",
+      messages: [
+        { role: "assistant", content: "previous answer" },
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: {
+                url: "https://example.com/image.png",
+                detail: "high",
+              },
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "lookup",
+            strict: true,
+            parameters: { type: "object" },
+          },
+        },
+      ],
+    })
+    expect(result.input).toEqual([
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "previous answer" }],
+      },
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_image",
+            image_url: "https://example.com/image.png",
+            detail: "high",
+          },
+        ],
+      },
+    ])
+    expect(result.tools?.[0].strict).toBe(true)
+  })
+
   test("user-only message becomes input array with input_text", () => {
     const chat: ChatCompletionsPayload = {
       model: "gpt-5.5",
@@ -222,6 +284,43 @@ describe("chatRequestToResponses", () => {
 })
 
 describe("responsesToChatResponse", () => {
+  test("preserves refusal output instead of dropping the assistant response", () => {
+    const result = responsesToChatResponse({
+      id: "refused",
+      object: "response",
+      created_at: 1,
+      model: "gpt-test",
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          id: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{ type: "refusal", refusal: "Cannot help with that." }],
+        },
+      ],
+    })
+    expect(result.choices[0].message).toMatchObject({
+      content: null,
+      refusal: "Cannot help with that.",
+    })
+  })
+
+  test("failed responses become errors, not successful chat completions", () => {
+    expect(() =>
+      responsesToChatResponse({
+        id: "failed",
+        object: "response",
+        created_at: 1,
+        model: "gpt-test",
+        status: "failed",
+        output: [],
+        error: { code: "server_error", message: "Failed" },
+      }),
+    ).toThrow("Responses upstream failed")
+  })
+
   test("plain message output becomes single choice with content string", () => {
     const resp: ResponsesResponse = {
       id: "resp_1",
@@ -355,6 +454,107 @@ describe("responsesToChatResponse", () => {
 })
 
 describe("responsesStreamToChatStream", () => {
+  test("preserves streaming refusal deltas", async () => {
+    const result = await collect(
+      responsesStreamToChatStream(
+        fromArray([
+          { event: "response.refusal.delta", data: '{"delta":"Cannot help."}' },
+          {
+            event: "response.completed",
+            data: '{"response":{"status":"completed"}}',
+          },
+        ]),
+        "gpt-test",
+      ),
+    )
+    expect(JSON.parse(result[1]) as unknown).toMatchObject({
+      choices: [{ delta: { refusal: "Cannot help." } }],
+    })
+    expect(result.at(-1)).toBe("[DONE]")
+  })
+
+  test.each([
+    { reason: "max_output_tokens", finishReason: "length" as const },
+    { reason: "content_filter", finishReason: "content_filter" as const },
+  ])(
+    "incomplete %j takes precedence over tool calls",
+    async ({ reason, finishReason }) => {
+      const response: ResponsesResponse = {
+        id: "incomplete",
+        object: "response",
+        created_at: 1,
+        model: "gpt-test",
+        status: "incomplete",
+        incomplete_details: { reason },
+        output: [
+          {
+            type: "function_call",
+            id: "item_1",
+            status: "in_progress",
+            call_id: "call_1",
+            name: "lookup",
+            arguments: "{",
+          },
+        ],
+      }
+      expect(responsesToChatResponse(response).choices[0].finish_reason).toBe(
+        finishReason,
+      )
+      const result = await collect(
+        responsesStreamToChatStream(
+          fromArray([
+            {
+              event: "response.output_item.added",
+              data: JSON.stringify({ item: response.output[0] }),
+            },
+            {
+              event: "response.incomplete",
+              data: JSON.stringify({ response }),
+            },
+          ]),
+          "gpt-test",
+        ),
+      )
+      const finalChunk = result.at(-2)
+      if (!finalChunk) throw new Error("Missing final chat chunk")
+      expect(JSON.parse(finalChunk) as unknown).toMatchObject({
+        choices: [{ finish_reason: finishReason }],
+      })
+    },
+  )
+
+  test("truncation does not invent a successful finish reason", async () => {
+    const error: unknown = await collect(
+      responsesStreamToChatStream(
+        fromArray([
+          {
+            event: "response.output_text.delta",
+            data: '{"delta":"partial"}',
+          },
+        ]),
+        "gpt-test",
+      ),
+    ).catch((error: unknown) => error)
+    expect(error).toMatchObject({
+      message: "Upstream Responses stream ended before a terminal event",
+    })
+  })
+
+  test("handles the standard error event", async () => {
+    const result = await collect(
+      responsesStreamToChatStream(
+        fromArray([
+          { event: "error", data: '{"type":"error","message":"Failed"}' },
+        ]),
+        "gpt-test",
+      ),
+    )
+    expect(JSON.parse(result[0]) as unknown).toMatchObject({
+      error: { message: "Failed" },
+    })
+    expect(result[1]).toBe("[DONE]")
+  })
+
   test("translates text deltas, leading role chunk, and final stop", async () => {
     const upstream = fromArray([
       {

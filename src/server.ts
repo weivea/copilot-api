@@ -46,6 +46,31 @@ server.route("/v1/embeddings", embeddingRoutes)
 server.route("/v1/messages", messageRoutes)
 server.route("/v1/responses", responsesRoutes)
 
+// API misses must not fall through to the dashboard's HTML fallback.
+const apiNotFound = new Hono()
+apiNotFound.all("*", (c) =>
+  c.json(
+    {
+      error: {
+        message: `Unknown API endpoint: ${c.req.method} ${c.req.path}`,
+        type: "invalid_request_error",
+        param: null,
+        code: "not_found",
+      },
+    },
+    404,
+  ),
+)
+for (const prefix of [
+  "/v1",
+  "/chat/completions",
+  "/models",
+  "/embeddings",
+  "/responses",
+]) {
+  server.route(prefix, apiNotFound)
+}
+
 function resolveSpaRoot(): string {
   // Explicit override (deployment / debugging)
   if (process.env.COPILOT_API_SPA_ROOT) {

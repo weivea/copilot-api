@@ -9,6 +9,7 @@ import type {
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { invalidRequest } from "~/lib/openai-request"
 import {
   recordResponsesOnlyModel,
   shouldUseResponsesEndpoint,
@@ -90,13 +91,38 @@ async function callChatCompletions(
     return events(response)
   }
 
-  return (await response.json()) as ChatCompletionResponse
+  const completion = (await response.json()) as Omit<
+    ChatCompletionResponse,
+    "model"
+  > & { model?: string }
+  return {
+    ...completion,
+    object: "chat.completion" as const,
+    created: completion.created ?? Math.floor(Date.now() / 1000),
+    model: completion.model ?? payload.model,
+  }
 }
 
 async function callViaResponses(
   payload: ChatCompletionsPayload,
   options?: { signal?: AbortSignal },
 ) {
+  if (payload.n !== undefined && payload.n !== null && payload.n !== 1) {
+    throw invalidRequest("This model only supports n=1", "n")
+  }
+  const unsupported = (["seed", "logit_bias", "thinking_budget"] as const).find(
+    (field) => payload[field] !== undefined && payload[field] !== null,
+  )
+  if (unsupported)
+    throw invalidRequest(
+      `${unsupported} is not supported for Responses-only models`,
+      unsupported,
+    )
+  if (payload.logprobs)
+    throw invalidRequest(
+      "logprobs is not supported for Responses-only models",
+      "logprobs",
+    )
   const responsesPayload = chatRequestToResponses(payload)
 
   if (payload.stream) {
@@ -159,6 +185,7 @@ export interface ChatCompletionChunk {
 
 interface Delta {
   content?: string | null
+  refusal?: string | null
   role?: "user" | "assistant" | "system" | "tool"
   tool_calls?: Array<{
     index: number
@@ -215,6 +242,7 @@ export interface ChatCompletionResponse {
 interface ResponseMessage {
   role: "assistant"
   content: string | null
+  refusal?: string | null
   padding?: string
   tool_calls?: Array<ToolCall>
 }
@@ -282,6 +310,7 @@ export interface Tool {
     name: string
     description?: string
     parameters: Record<string, unknown>
+    strict?: boolean | null
   }
 }
 
