@@ -15,7 +15,12 @@ import {
   invalidRequest,
   readJson,
 } from "~/lib/openai-request"
-import { deferUsage, flushUsage, recordUsage } from "~/lib/usage-recorder"
+import {
+  deferUsage,
+  flushUsage,
+  getTotalTokens,
+  recordUsage,
+} from "~/lib/usage-recorder"
 import {
   createImages,
   type ImageOperation,
@@ -103,13 +108,7 @@ function captureUsage(
     model: response.model ?? context.model,
     promptTokens: usage?.input_tokens,
     completionTokens: usage?.output_tokens,
-    totalTokens:
-      usage?.total_tokens
-      ?? ((
-        usage?.input_tokens !== undefined && usage.output_tokens !== undefined
-      ) ?
-        usage.input_tokens + usage.output_tokens
-      : undefined),
+    totalTokens: getTotalTokens(usage) ?? undefined,
     costNanoAiu: pickCostNanoAiu(response) ?? undefined,
   })
 }

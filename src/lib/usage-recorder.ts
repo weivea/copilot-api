@@ -128,6 +128,25 @@ export function flushUsage(c: Context, status = 200): void {
   writeLog({ tokenId, startedAt, status, endpoint: c.req.path, pending })
 }
 
+export function getTotalTokens(
+  usage:
+    | {
+        input_tokens?: number
+        output_tokens?: number
+        total_tokens?: number
+      }
+    | null
+    | undefined,
+): number | null {
+  if (typeof usage?.total_tokens === "number") return usage.total_tokens
+  if (
+    typeof usage?.input_tokens === "number"
+    && typeof usage.output_tokens === "number"
+  )
+    return usage.input_tokens + usage.output_tokens
+  return null
+}
+
 export function recordUsage(
   c: Context,
   data: Pick<

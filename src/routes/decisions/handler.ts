@@ -9,7 +9,7 @@ import {
   invalidRequest,
   readJson,
 } from "~/lib/openai-request"
-import { recordUsage } from "~/lib/usage-recorder"
+import { getTotalTokens, recordUsage } from "~/lib/usage-recorder"
 import { createDecisions } from "~/services/copilot/create-decisions"
 
 export async function handleDecisions(c: Context) {
@@ -44,7 +44,7 @@ export async function handleDecisions(c: Context) {
     model: response.model ?? parsed.data.model,
     promptTokens: response.usage?.input_tokens ?? null,
     completionTokens: response.usage?.output_tokens ?? null,
-    totalTokens: response.usage?.total_tokens ?? null,
+    totalTokens: getTotalTokens(response.usage),
     costNanoAiu: pickCostNanoAiu(response),
   })
   return c.json(response)

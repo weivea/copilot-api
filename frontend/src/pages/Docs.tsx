@@ -817,8 +817,25 @@ print(resp.choices[0].message.content)`
             <h2>Notes & Limits</h2>
             <ul>
               <li>
-                Tokens carry per-request, monthly, and lifetime limits. See your
-                quota on the <a href="/usage">Usage</a> page.
+                Chat, Decisions, image generation, and image editing share the
+                same proxy token&apos;s RPM, Monthly limit, and Lifetime limit.
+                See your quota on the <a href="/usage">Usage</a> page.
+              </li>
+              <li>
+                Usage takes upstream <code>usage.total_tokens</code>, or{" "}
+                <code>input_tokens + output_tokens</code> when both counts are
+                available but the total is missing. Image token details are
+                already included, not added again. Streaming image usage is
+                recorded once when the stream ends. AI credits are tracked
+                separately; missing token usage cannot be inferred from image
+                size or Base64 length.
+              </li>
+              <li>
+                Once a configured limit is reached, subsequent requests return{" "}
+                <code>429 monthly_quota_exceeded</code> or{" "}
+                <code>403 account_quota_exhausted</code>. Usage is settled after
+                each request, so in-flight or concurrent requests may exceed the
+                limit. The super admin retains its quota exemption.
               </li>
               <li>
                 If a request returns <code>503 copilot_unavailable</code>, the

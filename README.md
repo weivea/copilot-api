@@ -121,6 +121,10 @@ curl http://localhost:4141/v1/images/edits \
 - **使用计量**：每次请求记录 endpoint、状态码、模型、prompt/completion/total tokens、延迟；支持 1% 概率的过期日志清理。
 - **会话隔离**：管理后台使用 HttpOnly Lax Cookie，删除/禁用某 token 会级联清理其会话。
 
+Decision、生图和图片编辑与聊天共用同一个代理 token 的总用量、Monthly limit 和 Lifetime limit，不是独立额度。计数采用上游 `usage.total_tokens`；若缺失但同时提供 `input_tokens`、`output_tokens`，使用二者之和（输出为 `0` 也照常计入输入）。图片输入/输出 token 已在上游总数中，不重复加算细分项，也不按 Base64 长度、图片张数或 AI credits 换算 token。流式图片请求在流结束后入账一次。
+
+达到 Monthly limit 后后续请求返回 `429 monthly_quota_exceeded`，达到 Lifetime limit 后返回 `403 account_quota_exhausted`。这是与聊天一致的“请求前检查、结算后累计”：已执行中或并发请求可能使实际用量超出上限，不是严格预留额度的硬封顶。超级管理员沿用现有额度豁免；上游完全未返回可用 token usage 时无法准确计量，不伪造为零。
+
 ### Web Dashboard（新）
 - **静态 SPA**：基于 React + Vite + Recharts，构建产物随 `bun run build` 一并生成，由后端直接托管。
 - **Release 版本**：登录页和登录后的侧栏显示当前部署包的版本号，也可通过侧边导航栏的 **Version** 打开 `/version` 页面查看。构建时从根目录 `package.json` 自动读取，与 release 包名一致。

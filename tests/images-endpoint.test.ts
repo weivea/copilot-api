@@ -3,8 +3,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import {
   createAuthToken,
   getAuthTokenById,
+  setLifetimeUsed,
 } from "../src/db/queries/auth-tokens"
-import { recentLogs } from "../src/db/queries/request-logs"
+import {
+  aggregateUsageSince,
+  insertRequestLog,
+  recentLogs,
+  sumTokensSince,
+} from "../src/db/queries/request-logs"
 import { hashToken } from "../src/lib/auth-token-utils"
 import { state } from "../src/lib/state"
 import { server } from "../src/server"
@@ -308,26 +314,143 @@ describe("Images API", () => {
     },
   )
 
-  test.each(["generations", "edits"])(
-    "passes partial and completed %s events through and records final usage",
-    async (operation) => {
+  test.each(["monthly", "lifetime"])(
+    "combines chat, Decisions and image tokens for the %s limit",
+    async (limit) => {
+      makeTestDb()
+      state.authEnabled = true
+      const tokenId = await createAuthToken({
+        name: "shared-quota-user",
+        tokenHash: hashToken("shared-token"),
+        tokenPrefix: "shared",
+        monthlyTokenLimit: limit === "monthly" ? 25 : null,
+        lifetimeTokenLimit: limit === "lifetime" ? 25 : null,
+      })
+      await insertRequestLog({
+        authTokenId: tokenId,
+        timestamp: Date.now(),
+        endpoint: "/v1/chat/completions",
+        totalTokens: 5,
+        statusCode: 200,
+      })
+      await setLifetimeUsed(tokenId, 5)
+      const decision = {
+        model: "test-decisions",
+        input: "The service is down.",
+        questions: [
+          {
+            type: "predicate",
+            name: "outage",
+            instructions: "Is there an outage?",
+          },
+        ],
+      }
+      let upstreamCalls = 0
+      mockFetch((url) => {
+        if (typeof url !== "string") throw new Error("Expected upstream URL")
+        upstreamCalls++
+        return Response.json(
+          url.endsWith("/decisions") ?
+            {
+              answers: [{ type: "predicate", name: "outage", probability: 1 }],
+              usage: { input_tokens: 10, output_tokens: 0 },
+            }
+          : {
+              ...result,
+              usage: {
+                input_tokens: 4,
+                output_tokens: 6,
+                input_tokens_details: { text_tokens: 1, image_tokens: 3 },
+              },
+            },
+        )
+      })
+      const decisionResponse = await request(
+        "/v1/decisions",
+        decision,
+        "shared-token",
+      )
+      expect(decisionResponse.status).toBe(200)
+      expect(await decisionResponse.json()).toMatchObject({
+        usage: { input_tokens: 10, output_tokens: 0 },
+      })
+      expect(
+        (await request("/v1/images/generations", payload, "shared-token"))
+          .status,
+      ).toBe(200)
+      expect(await sumTokensSince(tokenId, 0)).toBe(25)
+      expect(await aggregateUsageSince(0)).toEqual({ requests: 3, tokens: 25 })
+      expect((await getAuthTokenById(tokenId))?.lifetimeTokenUsed).toBe(25)
+      const logs = await recentLogs({ tokenId, limit: 3 })
+      expect(
+        logs.find((log) => log.endpoint === "/v1/decisions"),
+      ).toMatchObject({
+        promptTokens: 10,
+        completionTokens: 0,
+        totalTokens: 10,
+      })
+      expect(
+        logs.find((log) => log.endpoint === "/v1/images/generations"),
+      ).toMatchObject({
+        promptTokens: 4,
+        completionTokens: 6,
+        totalTokens: 10,
+      })
+      for (const endpoint of [
+        "/decisions",
+        "/v1/decisions",
+        "/images/generations",
+        "/v1/images/generations",
+        "/images/edits",
+        "/v1/images/edits",
+      ]) {
+        const response = await request(endpoint, decision, "shared-token")
+        expect(response.status).toBe(limit === "monthly" ? 429 : 403)
+        expect(await response.json()).toMatchObject({
+          error: {
+            type:
+              limit === "monthly" ?
+                "monthly_quota_exceeded"
+              : "account_quota_exhausted",
+          },
+        })
+      }
+      expect(upstreamCalls).toBe(2)
+    },
+  )
+
+  test.each(
+    ["generations", "edits"].flatMap((operation) =>
+      ["monthly", "lifetime"].map((limit) => ({ operation, limit })),
+    ),
+  )(
+    "streaming images record final usage once and enforce the shared quota %j",
+    async ({ operation, limit }) => {
       makeTestDb()
       state.authEnabled = true
       const tokenId = await createAuthToken({
         name: "stream-user",
         tokenHash: hashToken("stream-token"),
         tokenPrefix: "stream",
+        monthlyTokenLimit: limit === "monthly" ? 10 : null,
+        lifetimeTokenLimit: limit === "lifetime" ? 10 : null,
       })
       const prefix = operation === "edits" ? "image_edit" : "image_generation"
       const partial = {
         type: `${prefix}.partial_image`,
         b64_json: "cGFydGlhbA==",
         partial_image_index: 0,
+        usage: { input_tokens: 4, output_tokens: 0, total_tokens: 4 },
       }
       const completed = {
         type: `${prefix}.completed`,
         b64_json: "ZmluYWw=",
         ...result,
+        usage: {
+          input_tokens: 4,
+          output_tokens: 6,
+          input_tokens_details: { text_tokens: 1, image_tokens: 3 },
+        },
       }
       mockFetch(() =>
         sse(
@@ -362,6 +485,22 @@ describe("Images API", () => {
         statusCode: 200,
       })
       expect((await getAuthTokenById(tokenId))?.lifetimeTokenUsed).toBe(10)
+      expect(await sumTokensSince(tokenId, 0)).toBe(10)
+      expect(await aggregateUsageSince(0)).toEqual({ requests: 1, tokens: 10 })
+      const blocked = await request(
+        "/v1/images/generations",
+        payload,
+        "stream-token",
+      )
+      expect(blocked.status).toBe(limit === "monthly" ? 429 : 403)
+      expect(await blocked.json()).toMatchObject({
+        error: {
+          type:
+            limit === "monthly" ?
+              "monthly_quota_exceeded"
+            : "account_quota_exhausted",
+        },
+      })
     },
   )
 
