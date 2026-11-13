@@ -36,6 +36,12 @@ const TRACKED_ENDPOINT_PREFIXES = [
   "/embeddings",
   "/v1/responses",
   "/responses",
+  "/v1/decisions",
+  "/decisions",
+  "/v1/images/generations",
+  "/images/generations",
+  "/v1/images/edits",
+  "/images/edits",
 ] as const
 
 function isTrackedEndpoint(path: string): boolean {
@@ -120,6 +126,25 @@ export function flushUsage(c: Context, status = 200): void {
   if (pending.recorded) return
   pending.recorded = true
   writeLog({ tokenId, startedAt, status, endpoint: c.req.path, pending })
+}
+
+export function getTotalTokens(
+  usage:
+    | {
+        input_tokens?: number
+        output_tokens?: number
+        total_tokens?: number
+      }
+    | null
+    | undefined,
+): number | null {
+  if (typeof usage?.total_tokens === "number") return usage.total_tokens
+  if (
+    typeof usage?.input_tokens === "number"
+    && typeof usage.output_tokens === "number"
+  )
+    return usage.input_tokens + usage.output_tokens
+  return null
 }
 
 export function recordUsage(

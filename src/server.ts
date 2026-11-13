@@ -10,7 +10,9 @@ import { staticSpa } from "./lib/static-spa"
 import { usageRecorder } from "./lib/usage-recorder"
 import { adminRoutes } from "./routes/admin/route"
 import { completionRoutes } from "./routes/chat-completions/route"
+import { decisionsRoutes } from "./routes/decisions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
+import { imageRoutes } from "./routes/images/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
 import { responsesRoutes } from "./routes/responses/route"
@@ -33,6 +35,8 @@ server.use("/chat/completions/*", requireCopilotReady())
 server.use("/models/*", requireCopilotReady())
 server.use("/embeddings/*", requireCopilotReady())
 server.use("/responses/*", requireCopilotReady())
+server.use("/decisions/*", requireCopilotReady())
+server.use("/images/*", requireCopilotReady())
 server.use("/token", requireCopilotReady())
 server.use("/v1/*", requireCopilotReady())
 
@@ -40,6 +44,8 @@ server.route("/chat/completions", completionRoutes)
 server.route("/models", modelRoutes)
 server.route("/embeddings", embeddingRoutes)
 server.route("/responses", responsesRoutes)
+server.route("/decisions", decisionsRoutes)
+server.route("/images", imageRoutes)
 server.route("/token", tokenRoute)
 
 server.route("/v1/chat/completions", completionRoutes)
@@ -47,6 +53,8 @@ server.route("/v1/models", modelRoutes)
 server.route("/v1/embeddings", embeddingRoutes)
 server.route("/v1/messages", messageRoutes)
 server.route("/v1/responses", responsesRoutes)
+server.route("/v1/decisions", decisionsRoutes)
+server.route("/v1/images", imageRoutes)
 
 // API misses must not fall through to the dashboard's HTML fallback.
 const apiNotFound = new Hono()
@@ -69,6 +77,8 @@ for (const prefix of [
   "/models",
   "/embeddings",
   "/responses",
+  "/decisions",
+  "/images",
 ]) {
   server.route(prefix, apiNotFound)
 }

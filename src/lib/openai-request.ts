@@ -23,6 +23,110 @@ export async function readJson(c: Context): Promise<unknown> {
   }
 }
 
+export const imageGenerationRequestSchema = z.looseObject({
+  model: z.string().refine((value) => value.trim().length > 0),
+  prompt: z.string().refine((value) => value.trim().length > 0),
+  stream: z.boolean().nullish(),
+})
+
+const imageReference = z
+  .looseObject({
+    image_url: z.string().min(1).optional(),
+    file_id: z.string().min(1).optional(),
+  })
+  .refine(
+    (value) => Boolean(value.image_url) !== Boolean(value.file_id),
+    "provide exactly one of image_url or file_id",
+  )
+
+export const imageEditRequestSchema = imageGenerationRequestSchema.extend({
+  images: z.array(imageReference).min(1),
+  mask: imageReference.nullish(),
+})
+
+export type ImagesPayload = z.infer<typeof imageGenerationRequestSchema>
+
+const decisionContentPart = z.looseObject({ type: z.string() })
+const decisionInstructions = z.union([
+  z
+    .string()
+    .min(1)
+    .refine((value) => value.trim().length > 0),
+  z.array(decisionContentPart).min(1),
+])
+const decisionQuestionFields = {
+  name: z
+    .string()
+    .min(1)
+    .refine((value) => value.trim().length > 0),
+  instructions: decisionInstructions,
+}
+const decisionQuestion = z.discriminatedUnion("type", [
+  z.looseObject({
+    ...decisionQuestionFields,
+    type: z.literal("predicate"),
+  }),
+  z.looseObject({
+    ...decisionQuestionFields,
+    type: z.literal("choice"),
+    choices: z
+      .array(
+        z.looseObject({
+          value: z.union([z.string(), z.boolean()]),
+          description: z.string().optional(),
+        }),
+      )
+      .min(2)
+      .max(255)
+      .refine(
+        (choices) =>
+          new Set(choices.map((choice) => choice.value)).size
+          === choices.length,
+        "choices must have distinct values",
+      ),
+  }),
+  z.looseObject({
+    ...decisionQuestionFields,
+    type: z.literal("score"),
+    levels: z
+      .array(
+        z.looseObject({
+          label: z.string().min(1),
+          description: z.string().optional(),
+        }),
+      )
+      .min(2)
+      .max(10),
+  }),
+])
+
+export const decisionsRequestSchema = z.looseObject({
+  model: z.string().min(1),
+  input: z.union([
+    z.string(),
+    z.array(
+      z.looseObject({
+        type: z.string().optional(),
+        role: z.string().optional(),
+        content: z.union([z.string(), z.array(decisionContentPart)]).optional(),
+      }),
+    ),
+  ]),
+  questions: z
+    .array(decisionQuestion)
+    .min(1)
+    .max(400)
+    .refine(
+      (questions) =>
+        new Set(questions.map((question) => question.name)).size
+        === questions.length,
+      "question names must be unique",
+    ),
+  stream: z.literal(false).optional(),
+})
+
+export type DecisionsPayload = z.infer<typeof decisionsRequestSchema>
+
 const textPart = z.looseObject({ type: z.literal("text"), text: z.string() })
 const imagePart = z.looseObject({
   type: z.literal("image_url"),

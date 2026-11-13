@@ -56,9 +56,63 @@ print(response.choices[0].message.content)
 - 流式请求只有设置 `stream_options={"include_usage": True}` 才向客户端输出 usage；普通 chunk 的 `usage` 为 `null`，统计信息单独放在 `choices: []` 的 chunk 中。上游流异常或提前关闭会返回错误，不伪造正常完成。
 - 支持 `POST /v1/responses`，包括 `input` 字符串和 `input=[{"role": "user", "content": "..."}]` 简写。仅支持 Responses 的模型会自动转换为 Chat Completions 格式供现有客户端使用；这条转换路径只支持 `n=1`，对无法转换的 `seed`、`logit_bias`、`thinking_budget`、`logprobs: true` 明确返回 `400`。
 - Responses 的 `store`、`background`、`previous_response_id` 按原值透传，由 Copilot 决定支持情况，代理不自行禁用或覆盖；省略的选项也不会被补写。实测当前账号的 `gpt-5.3-codex` 拒绝 `store: true` 和 `previous_response_id`，应在 `input` 中携带历史。
+- 支持 `POST /v1/decisions`（也可用 `/decisions`），直连 Copilot `/v1/decisions`，支持 `predicate`、`choice`、`score` 问题，返回上游 `answers`、概率、usage 和扩展字段，不转换成聊天文本、不支持 SSE。请求使用代理 token，纳入现有鉴权、配额和使用统计。
+- 支持 `POST /v1/images/generations` 生图和 `POST /v1/images/edits` 编辑（也可用 `/images/...`），支持 JSON、编辑文件上传和上游 SSE 事件，保留图片结果、usage 与 Copilot 计费字段，复用现有鉴权和配额。
 - embeddings 按客户端指定的 `encoding_format` 返回浮点数组或 float32 little-endian 的 Base64 字符串；即使上游忽略该选项，代理也会转换输出格式。
 - 错误采用 OpenAI 风格的 `error.message/type/param/code`，保留上游错误码及 `Retry-After`。无效 JSON / 已校验字段返回 `400`；未知 API 路径返回 JSON `404`，不会误返回 Dashboard HTML。
-- 兼容范围限定为 `POST /v1/chat/completions`、`POST /v1/responses`、`GET /v1/models`、`POST /v1/embeddings`。具体模型的参数、工具、图片、结构化输出和 embeddings 能力以 Copilot 上游为准，不额外实现音频、文件、Batch、Assistants 等其他产品接口。
+- 兼容范围限定为 `POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/decisions`、`POST /v1/images/generations`、`POST /v1/images/edits`、`GET /v1/models`、`POST /v1/embeddings`。具体模型的参数、工具、图片、结构化输出和 embeddings 能力以 Copilot 上游为准，不额外实现音频、文件、Batch、Assistants 等其他产品接口。
+
+#### Decisions API
+
+GitHub 官方 [gh-aw 调用实现](https://github.com/github/gh-aw/blob/main/actions/setup/js/decisions_client.cjs)已使用 Copilot `/v1/decisions`，协议为 `{ model, input, questions }`，与 [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) 的类型化决策格式一致；它不同于 Auto 模式的模型选择器，也不是 Microsoft Foundry 的 `systemone` 接口。
+
+```sh
+curl http://localhost:4141/v1/decisions \
+  -H "Authorization: Bearer YOUR_PROXY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "YOUR_DECISION_MODEL_ID",
+    "input": "The API returns 500 on every call.",
+    "questions": [{
+      "type": "predicate",
+      "name": "is_outage",
+      "instructions": "Does this report describe a service outage?"
+    }]
+  }'
+```
+
+将 `YOUR_DECISION_MODEL_ID` 替换为当前账号模型目录中的实际决策模型 ID，不要仅根据展示名称推断 ID 或把普通聊天模型强行替换成决策模型。`/v1/models` 出现模型不保证账号有推理权限；可在后台模型页查看完整的上游能力信息。账号权限、模型名和参数是否受支持最终由上游校验，失败会保留 HTTP 状态、错误信息和重试头。
+
+鉴权仍复用本项目的 GitHub OAuth → Copilot token 流程，不直接向上游传递客户端的代理 token。已有 [PAT 被该端点拒绝的报告](https://github.com/github/gh-aw/issues/75637)；本接口的加入不意味着所有 Copilot 订阅或凭据都已开放 Decisions，部署后需用自己的账号确认可用性。
+
+#### Images API
+
+[GitHub 已发布图片生成与编辑预览](https://github.blog/changelog/2026-10-28-generate-and-edit-images-directly-in-copilot/)。实时模型目录中的 `gpt-image-2.5-flare` 标注支持 `/v1/images/generations` 和 `/v1/images/edits`，代理使用对应路径直连上游。模型是否可用仍受账号权限和组织策略约束。
+
+```sh
+curl http://localhost:4141/v1/images/generations \
+  -H "Authorization: Bearer YOUR_PROXY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2.5-flare",
+    "prompt": "A small blue robot watering a plant",
+    "size": "1024x1024",
+    "quality": "low",
+    "output_format": "png"
+  }'
+
+curl http://localhost:4141/v1/images/edits \
+  -H "Authorization: Bearer YOUR_PROXY_TOKEN" \
+  -F "model=gpt-image-2.5-flare" \
+  -F "image[]=@source.png" \
+  -F "prompt=Change the background to a sunny garden"
+```
+
+编辑支持 `image` 单文件、重复的 `image[]` 多文件和可选 `mask` 文件，不要手动设置 multipart 的 Content-Type。也支持 [OpenAI JSON 编辑格式](https://developers.openai.com/api/reference/resources/images/methods/edit)：`images: [{ image_url: "data:image/png;base64,..." }]`，每个引用也可换成上游有效的 `file_id`；代理不实现 Files API，也不会自行下载 URL。
+
+`model`、非空 `prompt` 必填；尺寸、质量、张数等可选参数和扩展字段原样透传，省略时不补写。结果保留 `data[].b64_json`（解码后保存为图片）、上游返回的 URL、usage、计费与扩展字段，代理不存储图片或伪造下载地址。上游支持时可用 `stream: true`（multipart 用 `stream=true`）和 `partial_images` 获取 `image_generation` / `image_edit` SSE 事件；异常或未完成的流会明确报错。
+
+图片 token 纳入现有使用统计和配额，Copilot 返回的 nano-AIU 计费字段会被记录。GitHub 对生图单独按图片 token 消耗 AI credits，实际消耗可能高于文本请求。暂不实现 `/v1/images/variations`；完整示例也可在 Dashboard `/docs` 查看。
 
 ### 多 token 鉴权与配额（新）
 - **三级角色模型**：`super`（超级管理员，文件存储）/ `admin`（管理员，可管理普通 token）/ `user`（仅可查看自身）。
@@ -66,6 +120,10 @@ print(response.choices[0].message.content)
 - **每 token 配额**：可配置 RPM、月度 token 上限、终身 token 上限；命中上限时返回带类型的 `429`/`403` JSON 错误。
 - **使用计量**：每次请求记录 endpoint、状态码、模型、prompt/completion/total tokens、延迟；支持 1% 概率的过期日志清理。
 - **会话隔离**：管理后台使用 HttpOnly Lax Cookie，删除/禁用某 token 会级联清理其会话。
+
+Decision、生图和图片编辑与聊天共用同一个代理 token 的总用量、Monthly limit 和 Lifetime limit，不是独立额度。计数采用上游 `usage.total_tokens`；若缺失但同时提供 `input_tokens`、`output_tokens`，使用二者之和（输出为 `0` 也照常计入输入）。图片输入/输出 token 已在上游总数中，不重复加算细分项，也不按 Base64 长度、图片张数或 AI credits 换算 token。流式图片请求在流结束后入账一次。
+
+达到 Monthly limit 后后续请求返回 `429 monthly_quota_exceeded`，达到 Lifetime limit 后返回 `403 account_quota_exhausted`。这是与聊天一致的“请求前检查、结算后累计”：已执行中或并发请求可能使实际用量超出上限，不是严格预留额度的硬封顶。超级管理员沿用现有额度豁免；上游完全未返回可用 token usage 时无法准确计量，不伪造为零。
 
 ### Web Dashboard（新）
 - **静态 SPA**：基于 React + Vite + Recharts，构建产物随 `bun run build` 一并生成，由后端直接托管。
