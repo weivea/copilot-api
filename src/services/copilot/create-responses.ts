@@ -27,19 +27,24 @@ export const createResponses = async (
     && payload.input.some(
       (item) =>
         isMessageItem(item)
+        && Array.isArray(item.content)
         && item.content.some((c) => c.type === "input_image"),
     )
 
   // Mirror create-chat-completions: agent call when there's prior assistant
   // turn or function call traffic in the input.
   const isAgentCall =
-    Array.isArray(payload.input)
-    && payload.input.some((item) => {
-      if (item.type === "function_call" || item.type === "function_call_output")
-        return true
-      if (isMessageItem(item) && item.role === "assistant") return true
-      return false
-    })
+    Boolean(payload.previous_response_id)
+    || (Array.isArray(payload.input)
+      && payload.input.some((item) => {
+        if (
+          item.type === "function_call"
+          || item.type === "function_call_output"
+        )
+          return true
+        if (isMessageItem(item) && item.role === "assistant") return true
+        return false
+      }))
 
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
@@ -135,7 +140,7 @@ export type ResponsesInputItem =
 export interface ResponsesMessageItem {
   type?: "message"
   role: "user" | "assistant" | "system" | "developer"
-  content: Array<ResponsesContentPart>
+  content: string | Array<ResponsesContentPart>
 }
 
 export interface ResponsesFunctionCallItem {
@@ -152,8 +157,8 @@ export interface ResponsesFunctionCallOutputItem {
 }
 
 export type ResponsesContentPart =
-  | { type: "input_text"; text: string }
-  | { type: "input_image"; image_url: string }
+  | { type: "input_text" | "output_text"; text: string }
+  | { type: "input_image"; image_url: string; detail?: "low" | "high" | "auto" }
   | { type: "input_file"; file_id: string }
 
 export interface ResponsesTool {
@@ -161,6 +166,7 @@ export interface ResponsesTool {
   name: string
   description?: string
   parameters: Record<string, unknown>
+  strict?: boolean | null
 }
 
 // ---- Response types -------------------------------------------------------

@@ -28,6 +28,19 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("createChatCompletions fallback to /responses", () => {
+  test.each([{ n: 2 }, { seed: 1 }, { logprobs: true }])(
+    "rejects options that cannot be represented instead of silently ignoring %j",
+    async (options) => {
+      recordResponsesOnlyModel("responses-only")
+      const error: unknown = await createChatCompletions({
+        model: "responses-only",
+        messages: [{ role: "user", content: "hi" }],
+        ...options,
+      }).catch((error: unknown) => error)
+      expect(error).toMatchObject({ response: { status: 400 } })
+    },
+  )
+
   test("when whitelist has model, calls /responses directly and returns chat-shaped response", async () => {
     recordResponsesOnlyModel("gpt-5.5")
     const calls: Array<string> = []
@@ -136,12 +149,11 @@ describe("createChatCompletions fallback to /responses", () => {
       )
     }) as typeof fetch
 
-    await expect(
-      createChatCompletions({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "hi" }],
-      }),
-    ).rejects.toThrow()
+    const error = await createChatCompletions({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+    }).catch((failure: unknown) => failure)
+    expect(error).toBeInstanceOf(Error)
     expect(seen).toHaveLength(1)
     expect(seen[0].endsWith("/chat/completions")).toBe(true)
   })

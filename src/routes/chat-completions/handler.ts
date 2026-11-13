@@ -3,31 +3,29 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 
+import type { Model } from "~/services/copilot/get-models"
+
 import { awaitApproval } from "~/lib/approval"
 import {
   captureInfoMessages,
   pickCostNanoAiu,
 } from "~/lib/copilot-info-messages"
+import {
+  chatRequestSchema,
+  invalidRequest,
+  readJson,
+} from "~/lib/openai-request"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
-import { isNullish, formatErrorWithCause } from "~/lib/utils"
+import { formatErrorWithCause } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
-
-function isGptModel(model: string): boolean {
-  return (
-    model.startsWith("gpt-")
-    || model.startsWith("o1-")
-    || model.startsWith("o3-")
-    || model.startsWith("o4-")
-  )
-}
 
 interface ThinkingBlock {
   type: "thinking"
@@ -57,15 +55,6 @@ function isThinkingBlock(value: unknown): value is ThinkingBlock {
   )
 }
 
-function hasThinkingBlock(obj: unknown): boolean {
-  if (!obj || typeof obj !== "object") return false
-  if (isThinkingBlock(obj)) return true
-  if (Array.isArray(obj)) return obj.some((v) => hasThinkingBlock(v))
-  return Object.values(obj as Record<string, unknown>).some((v) =>
-    hasThinkingBlock(v),
-  )
-}
-
 function collapseFiltered(filtered: Array<ContentBlock>): MessageContent {
   if (filtered.length === 0) return ""
   const first = filtered[0]
@@ -73,6 +62,7 @@ function collapseFiltered(filtered: Array<ContentBlock>): MessageContent {
     filtered.length === 1
     && first.type === "text"
     && typeof (first as TextBlock).text === "string"
+    && Object.keys(first).length === 2
   ) {
     return (first as TextBlock).text
   }
@@ -84,6 +74,7 @@ function removeThinkingBlocks(content: MessageContent): MessageContent {
 
   // Array: filter out thinking blocks
   if (Array.isArray(content)) {
+    if (!content.some((item) => isThinkingBlock(item))) return content
     const filtered = content.filter((item) => !isThinkingBlock(item))
     return collapseFiltered(filtered)
   }
@@ -117,27 +108,40 @@ interface ChatMessage {
   [k: string]: unknown
 }
 
-function stripThinkingBlocks(messages: Array<ChatMessage>): Array<ChatMessage> {
-  let totalStripped = 0
-  const result = messages.map((msg) => {
-    if (!msg.content) return msg
-    if (!hasThinkingBlock(msg.content)) return msg
-    totalStripped++
-    return { ...msg, content: removeThinkingBlocks(msg.content) }
-  })
-  if (totalStripped > 0) {
-    consola.debug(
-      `stripThinkingBlocks: stripped thinking blocks from ${totalStripped} message(s)`,
-    )
+async function readChatPayload(c: Context): Promise<ChatCompletionsPayload> {
+  const raw = await readJson(c)
+  // Retain support for clients echoing Anthropic thinking blocks.
+  if (
+    typeof raw === "object"
+    && raw !== null
+    && "messages" in raw
+    && Array.isArray(raw.messages)
+  ) {
+    raw.messages = raw.messages.map((message: unknown) => {
+      if (
+        typeof message !== "object"
+        || message === null
+        || !("content" in message)
+      )
+        return message
+      return {
+        ...message,
+        content: removeThinkingBlocks(message.content as MessageContent),
+      }
+    })
   }
-  return result
-}
-
-export async function handleCompletion(c: Context) {
-  await checkRateLimit(state)
-
-  let payload = await c.req.json<ChatCompletionsPayload>()
-
+  const parsed = chatRequestSchema.safeParse(raw)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    throw invalidRequest(issue.message, issue.path.join("."))
+  }
+  const payload: ChatCompletionsPayload = {
+    ...parsed.data,
+    messages: parsed.data.messages.map((message) => ({
+      ...message,
+      content: message.content ?? null,
+    })),
+  }
   // Strip reasoning_text from assistant messages (some clients echo it back
   // and upstream rejects it as an unknown field on assistant turns).
   payload.messages = payload.messages.map((msg) => {
@@ -149,19 +153,13 @@ export async function handleCompletion(c: Context) {
     return msg
   })
 
-  // Strip thinking blocks (Anthropic-style content) — upstream chat/completions
-  // does not understand them and will fail validation.
-  payload = {
-    ...payload,
-    messages: stripThinkingBlocks(
-      payload.messages as Array<ChatMessage>,
-    ) as typeof payload.messages,
-  }
+  return payload
+}
 
-  const selectedModel = state.models?.data.find(
-    (model) => model.id === payload.model,
-  )
-
+async function logTokenEstimate(
+  payload: ChatCompletionsPayload,
+  selectedModel: Model | undefined,
+) {
   // Local token estimation is purely diagnostic and CPU-heavy (full BPE
   // encoding). Skip unless the consola log level is at debug or below.
   if (selectedModel && consola.level >= 4) {
@@ -172,33 +170,33 @@ export async function handleCompletion(c: Context) {
       consola.warn("Failed to calculate token count:", error)
     }
   }
+}
+
+export async function handleCompletion(c: Context) {
+  const payload = await readChatPayload(c)
+  await checkRateLimit(state)
+
+  const selectedModel = state.models?.data.find(
+    (model) => model.id === payload.model,
+  )
+  await logTokenEstimate(payload, selectedModel)
 
   if (state.manualApprove) await awaitApproval()
-
-  const gpt = isGptModel(payload.model)
-  if (gpt) {
-    if (isNullish(payload.max_completion_tokens)) {
-      const limit = selectedModel?.capabilities.limits?.max_output_tokens
-      payload.max_completion_tokens = limit
-    }
-    delete payload.max_tokens
-  } else if (isNullish(payload.max_tokens)) {
-    payload = {
-      ...payload,
-      max_tokens: selectedModel?.capabilities.limits?.max_output_tokens,
-    }
-  }
 
   // AbortController governs the upstream fetch so we can cancel cleanly on
   // client disconnect; otherwise an orphaned upstream socket eventually shows
   // up as "socket closed unexpectedly" on the client side.
   const upstreamController = new AbortController()
+  const onRequestAbort = () => upstreamController.abort()
+  c.req.raw.signal.addEventListener("abort", onRequestAbort, { once: true })
+  if (c.req.raw.signal.aborted) upstreamController.abort()
   let response: Awaited<ReturnType<typeof createChatCompletions>>
   try {
     response = await createChatCompletions(payload, {
       signal: upstreamController.signal,
     })
   } catch (error) {
+    c.req.raw.signal.removeEventListener("abort", onRequestAbort)
     consola.error(
       "Upstream chat completions failed:",
       formatErrorWithCause(error),
@@ -207,6 +205,7 @@ export async function handleCompletion(c: Context) {
   }
 
   if (isNonStreaming(response)) {
+    c.req.raw.signal.removeEventListener("abort", onRequestAbort)
     captureInfoMessages(response, {
       endpoint: "/v1/chat/completions",
       model: response.model,
@@ -232,6 +231,10 @@ export async function handleCompletion(c: Context) {
         c,
         model: payload.model,
         upstreamController,
+        includeUsage: payload.stream_options?.include_usage === true,
+        costNanoAiu: null,
+        onRequestAbort,
+        created: Math.floor(Date.now() / 1000),
       }),
     (error) => {
       consola.error(
@@ -249,6 +252,54 @@ interface PipeOpenAIStreamCtx {
   c: Context
   model: string
   upstreamController: AbortController
+  includeUsage: boolean
+  costNanoAiu: number | null
+  onRequestAbort: () => void
+  created: number
+}
+
+async function forwardChatChunk(
+  stream: SSEStreamingApi,
+  data: string,
+  ctx: PipeOpenAIStreamCtx,
+) {
+  const upstream = JSON.parse(data) as Partial<ChatCompletionChunk>
+  const parsed =
+    Array.isArray(upstream.choices) ?
+      {
+        ...upstream,
+        object: "chat.completion.chunk" as const,
+        created: upstream.created ?? ctx.created,
+        model: upstream.model ?? ctx.model,
+      }
+    : upstream
+  if (parsed.usage) {
+    ctx.usage.prompt = parsed.usage.prompt_tokens ?? ctx.usage.prompt
+    ctx.usage.completion =
+      parsed.usage.completion_tokens ?? ctx.usage.completion
+    ctx.usage.total = parsed.usage.total_tokens ?? ctx.usage.total
+  }
+  captureInfoMessages(parsed, {
+    endpoint: "/v1/chat/completions",
+    model: parsed.model,
+  })
+  ctx.costNanoAiu = pickCostNanoAiu(parsed) ?? ctx.costNanoAiu
+  if (!Array.isArray(parsed.choices)) {
+    await stream.writeSSE({ data: JSON.stringify(parsed) })
+    return
+  }
+  const { usage, ...rest } = parsed
+  if (parsed.choices.length > 0)
+    await stream.writeSSE({
+      data: JSON.stringify({
+        ...rest,
+        ...(ctx.includeUsage && { usage: null }),
+      }),
+    })
+  if (ctx.includeUsage && usage)
+    await stream.writeSSE({
+      data: JSON.stringify({ ...rest, choices: [], usage }),
+    })
 }
 
 async function pipeOpenAIStream(
@@ -257,7 +308,7 @@ async function pipeOpenAIStream(
 ): Promise<void> {
   const { response, usage, c, model, upstreamController } = ctx
   const abortState = { aborted: false }
-  let costNanoAiu: number | null = null
+  let completed = false
   // Idempotency guard: protect the post-error writes from being entered twice
   // if the catch path and a subsequent fault both fire.
   const finalizerState = { ran: false }
@@ -279,25 +330,15 @@ async function pipeOpenAIStream(
     for await (const chunk of response) {
       if (abortState.aborted) break
       if (chunk.data === undefined) continue
-      if (chunk.data && chunk.data !== "[DONE]") {
-        try {
-          const parsed = JSON.parse(chunk.data) as ChatCompletionChunk
-          if (parsed.usage) {
-            usage.prompt = parsed.usage.prompt_tokens ?? usage.prompt
-            usage.completion =
-              parsed.usage.completion_tokens ?? usage.completion
-            usage.total = parsed.usage.total_tokens ?? usage.total
-          }
-          captureInfoMessages(parsed, {
-            endpoint: "/v1/chat/completions",
-            model: parsed.model,
-          })
-          costNanoAiu = pickCostNanoAiu(parsed) ?? costNanoAiu
-        } catch {
-          /* not json */
-        }
+      if (chunk.data === "[DONE]") {
+        completed = true
+        await stream.writeSSE({ data: "[DONE]" })
+        break
       }
-      await stream.writeSSE({ data: chunk.data })
+      if (chunk.data) await forwardChatChunk(stream, chunk.data, ctx)
+    }
+    if (!completed && !abortState.aborted) {
+      throw new Error("Upstream chat stream ended before [DONE]")
     }
   } catch (error) {
     consola.error(
@@ -321,12 +362,13 @@ async function pipeOpenAIStream(
   } finally {
     clearInterval(pingInterval)
     upstreamController.abort()
+    c.req.raw.signal.removeEventListener("abort", ctx.onRequestAbort)
     recordUsage(c, {
       model,
       promptTokens: usage.prompt || null,
       completionTokens: usage.completion || null,
       totalTokens: usage.total || null,
-      costNanoAiu,
+      costNanoAiu: ctx.costNanoAiu,
     })
     flushUsage(c)
   }

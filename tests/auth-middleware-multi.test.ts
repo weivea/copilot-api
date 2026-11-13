@@ -27,10 +27,16 @@ function makeApp(): Hono {
   app.get("/tokens", (c) => c.text("spa-fallthrough"))
   app.get("/token", (c) => c.json({ ok: true }))
   app.get("/modelsearch", (c) => c.text("spa-fallthrough"))
+  app.post("/responses", (c) => c.json({ ok: true }))
   return app
 }
 
 describe("authMiddleware (multi)", () => {
+  test("unversioned Responses endpoint requires authentication too", async () => {
+    const res = await makeApp().request("/responses", { method: "POST" })
+    expect(res.status).toBe(401)
+  })
+
   test("super admin token passes and sets no tokenId", async () => {
     const res = await makeApp().request("/v1/messages", {
       method: "POST",

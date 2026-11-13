@@ -1,5 +1,7 @@
+import { HTTPError } from "~/lib/error"
 import {
   type ChatCompletionResponse,
+  type ChatCompletionChunk,
   type ChatCompletionsPayload,
   type ContentPart,
   type Message,
@@ -22,6 +24,7 @@ import {
   type AnthropicUserContentBlock,
   type AnthropicUserMessage,
 } from "./anthropic-types"
+import { resolveMessagesModel } from "./request"
 import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Payload translation
@@ -30,7 +33,7 @@ export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
 ): ChatCompletionsPayload {
   return {
-    model: translateModelName(payload.model),
+    model: resolveMessagesModel(payload.model),
     messages: translateAnthropicMessagesToOpenAI(
       payload.messages,
       payload.system,
@@ -38,27 +41,22 @@ export function translateToOpenAI(
     max_tokens: payload.max_tokens,
     stop: payload.stop_sequences,
     stream: payload.stream,
+    stream_options: payload.stream ? { include_usage: true } : undefined,
     temperature: payload.temperature,
     top_p: payload.top_p,
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
+    parallel_tool_calls:
+      payload.tool_choice?.disable_parallel_tool_use === undefined ?
+        undefined
+      : !payload.tool_choice.disable_parallel_tool_use,
     thinking_budget:
       payload.thinking?.type === "enabled" ?
         payload.thinking.budget_tokens
       : undefined,
     reasoning_effort: payload.output_config?.effort,
   }
-}
-
-function translateModelName(model: string): string {
-  // Subagent requests use a specific model number which Copilot doesn't support
-  if (model.startsWith("claude-sonnet-4-")) {
-    return model.replace(/^claude-sonnet-4-.*/, "claude-sonnet-4")
-  } else if (model.startsWith("claude-opus-")) {
-    return model.replace(/^claude-opus-4-.*/, "claude-opus-4")
-  }
-  return model
 }
 
 function translateAnthropicMessagesToOpenAI(
@@ -108,7 +106,7 @@ function handleUserMessage(message: AnthropicUserMessage): Array<Message> {
       newMessages.push({
         role: "tool",
         tool_call_id: block.tool_use_id,
-        content: mapContent(block.content),
+        content: mapContent(block.content ?? ""),
       })
     }
 
@@ -221,7 +219,10 @@ function mapContent(
         contentParts.push({
           type: "image_url",
           image_url: {
-            url: `data:${block.source.media_type};base64,${block.source.data}`,
+            url:
+              block.source.type === "url" ?
+                block.source.url
+              : `data:${block.source.media_type};base64,${block.source.data}`,
           },
         })
 
@@ -245,6 +246,7 @@ function translateAnthropicToolsToOpenAI(
       name: tool.name,
       description: tool.description,
       parameters: tool.input_schema,
+      ...(tool.strict !== undefined && { strict: tool.strict }),
     },
   }))
 }
@@ -304,7 +306,9 @@ export function translateToAnthropic(
   let stopReason: OpenAIStop | null = null
 
   for (const choice of response.choices) {
-    const textBlocks = getAnthropicTextBlocks(choice.message.content)
+    const textBlocks = getAnthropicTextBlocks(
+      choice.message.content ?? choice.message.refusal ?? null,
+    )
     const toolUseBlocks = getAnthropicToolUseBlocks(choice.message.tool_calls)
 
     allTextBlocks.push(...textBlocks)
@@ -317,9 +321,16 @@ export function translateToAnthropic(
     ) {
       stopReason = fr
     }
+    if (choice.message.refusal && stopReason === "stop")
+      stopReason = "content_filter"
   }
 
-  // Note: GitHub Copilot doesn't generate thinking blocks, so we don't include them in responses
+  // Copilot can report "stop" even when a forced function call was returned.
+  if (
+    allToolUseBlocks.length > 0
+    && (stopReason === null || stopReason === "stop")
+  )
+    stopReason = "tool_calls"
 
   const out: AnthropicResponse = {
     id: response.id,
@@ -329,27 +340,26 @@ export function translateToAnthropic(
     content: [...allTextBlocks, ...allToolUseBlocks],
     stop_reason: mapOpenAIStopReasonToAnthropic(stopReason),
     stop_sequence: null,
-    usage: {
-      input_tokens:
-        (response.usage?.prompt_tokens ?? 0)
-        - (response.usage?.prompt_tokens_details?.cached_tokens ?? 0)
-        - (response.usage?.prompt_tokens_details?.cache_creation_input_tokens
-          ?? 0),
-      output_tokens: response.usage?.completion_tokens ?? 0,
-      ...(response.usage?.prompt_tokens_details?.cached_tokens
-        !== undefined && {
-        cache_read_input_tokens:
-          response.usage.prompt_tokens_details.cached_tokens,
-      }),
-      ...(response.usage?.prompt_tokens_details?.cache_creation_input_tokens
-        !== undefined && {
-        cache_creation_input_tokens:
-          response.usage.prompt_tokens_details.cache_creation_input_tokens,
-      }),
-    },
+    usage: translateUsage(response.usage),
   }
 
   return mountCopilotInfoMessages(out, response)
+}
+
+export function translateUsage(
+  usage: ChatCompletionChunk["usage"],
+): AnthropicResponse["usage"] {
+  const cached = usage?.prompt_tokens_details?.cached_tokens
+  const created = usage?.prompt_tokens_details?.cache_creation_input_tokens
+  return {
+    input_tokens: Math.max(
+      0,
+      (usage?.prompt_tokens ?? 0) - (cached ?? 0) - (created ?? 0),
+    ),
+    output_tokens: usage?.completion_tokens ?? 0,
+    ...(cached !== undefined && { cache_read_input_tokens: cached }),
+    ...(created !== undefined && { cache_creation_input_tokens: created }),
+  }
 }
 
 function mountCopilotInfoMessages(
@@ -388,6 +398,26 @@ function getAnthropicToolUseBlocks(
     type: "tool_use",
     id: toolCall.id,
     name: toolCall.function.name,
-    input: JSON.parse(toolCall.function.arguments) as Record<string, unknown>,
+    input: parseToolArguments(toolCall.function.arguments),
   }))
+}
+
+export function parseToolArguments(
+  argumentsJSON: string,
+): Record<string, unknown> {
+  let value: unknown
+  try {
+    value = JSON.parse(argumentsJSON)
+  } catch {
+    throw new HTTPError(
+      "Upstream returned invalid tool arguments",
+      new Response(null, { status: 502 }),
+    )
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new HTTPError(
+      "Upstream tool arguments must be a JSON object",
+      new Response(null, { status: 502 }),
+    )
+  return value as Record<string, unknown>
 }

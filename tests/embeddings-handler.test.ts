@@ -17,6 +17,95 @@ afterEach(() => {
 })
 
 describe("embeddings handler", () => {
+  test.each([
+    { format: "base64", upstream: [1, -2], expected: "AACAPwAAAMA=" },
+    { format: "base64", upstream: "AACAPwAAAMA=", expected: "AACAPwAAAMA=" },
+    { format: "float", upstream: "AACAPwAAAMA=", expected: [1, -2] },
+    { format: undefined, upstream: "AACAPwAAAMA=", expected: [1, -2] },
+  ])(
+    "returns the requested embedding encoding %j",
+    async ({ format, upstream, expected }) => {
+      let sent: unknown
+      globalThis.fetch = ((_url, init) => {
+        if (typeof init?.body !== "string")
+          throw new Error("Expected JSON body")
+        sent = JSON.parse(init.body) as unknown
+        return Promise.resolve(
+          Response.json({
+            data: [{ object: "embedding", index: 0, embedding: upstream }],
+            usage: { prompt_tokens: 1, total_tokens: 1 },
+          }),
+        )
+      }) as typeof fetch
+      const res = await embeddingRoutes.request("/", {
+        method: "POST",
+        body: JSON.stringify({
+          model: "test",
+          input: [[1, 2]],
+          dimensions: 2,
+          encoding_format: format,
+          upstream_option: "preserved",
+        }),
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({
+        data: [{ embedding: expected }],
+      })
+      expect(sent).toMatchObject({
+        input: [[1, 2]],
+        dimensions: 2,
+        upstream_option: "preserved",
+      })
+    },
+  )
+
+  test.each(["not-base64", "AAAA", "AACAfw==", []])(
+    "invalid upstream vectors return 502: %j",
+    async (embedding) => {
+      globalThis.fetch = Object.assign(
+        () =>
+          Promise.resolve(
+            Response.json({
+              data: [{ object: "embedding", index: 0, embedding }],
+              usage: { prompt_tokens: 1, total_tokens: 1 },
+            }),
+          ),
+        { preconnect: originalFetch.preconnect },
+      )
+      const res = await embeddingRoutes.request("/", {
+        method: "POST",
+        body: JSON.stringify({ model: "test", input: "hi" }),
+      })
+      expect(res.status).toBe(502)
+      expect(await res.json()).toMatchObject({
+        error: {
+          type: "api_error",
+          message: "Upstream returned an invalid embedding vector",
+        },
+      })
+    },
+  )
+
+  test("invalid embeddings input returns 400 before contacting upstream", async () => {
+    let called = false
+    globalThis.fetch = Object.assign(
+      () => {
+        called = true
+        return Promise.reject(new Error("Must not call upstream"))
+      },
+      { preconnect: originalFetch.preconnect },
+    )
+    const res = await embeddingRoutes.request("/", {
+      method: "POST",
+      body: JSON.stringify({ model: "test", input: [] }),
+    })
+    expect(res.status).toBe(400)
+    expect(called).toBe(false)
+    expect(await res.json()).toMatchObject({
+      error: { type: "invalid_request_error" },
+    })
+  })
+
   test("succeeds when upstream omits top-level object and model", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(

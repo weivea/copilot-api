@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import path from "node:path"
 
+import { anthropicErrors } from "./lib/anthropic-error"
 import { authMiddleware } from "./lib/auth-middleware"
 import { requireCopilotReady } from "./lib/copilot-availability"
 import { redactingLogger } from "./lib/redacting-logger"
@@ -19,6 +20,7 @@ export const server = new Hono()
 
 server.use(redactingLogger())
 server.use(cors())
+server.use("/v1/messages/*", anthropicErrors())
 
 server.get("/healthz", (c) => c.text("ok"))
 
@@ -45,6 +47,31 @@ server.route("/v1/models", modelRoutes)
 server.route("/v1/embeddings", embeddingRoutes)
 server.route("/v1/messages", messageRoutes)
 server.route("/v1/responses", responsesRoutes)
+
+// API misses must not fall through to the dashboard's HTML fallback.
+const apiNotFound = new Hono()
+apiNotFound.all("*", (c) =>
+  c.json(
+    {
+      error: {
+        message: `Unknown API endpoint: ${c.req.method} ${c.req.path}`,
+        type: "invalid_request_error",
+        param: null,
+        code: "not_found",
+      },
+    },
+    404,
+  ),
+)
+for (const prefix of [
+  "/v1",
+  "/chat/completions",
+  "/models",
+  "/embeddings",
+  "/responses",
+]) {
+  server.route(prefix, apiNotFound)
+}
 
 function resolveSpaRoot(): string {
   // Explicit override (deployment / debugging)

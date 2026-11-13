@@ -36,6 +36,30 @@
 - **Claude Code 集成**：通过 `--claude-code` 一键生成可直接粘贴的环境变量启动命令。
 - **多账号类型支持**：individual / business / enterprise 三种 GitHub Copilot 计划均可使用。
 
+#### OpenAI 客户端配置与兼容范围
+
+将客户端的 **Base URL** 设置为 `http://localhost:4141/v1`（替换为实际部署地址），API Key 使用代理生成的 token，**不是 GitHub OAuth token**。模型 ID 以 `GET /v1/models` 返回值为准，也可通过 `GET /v1/models/{model}` 查询单个模型。
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:4141/v1", api_key="YOUR_PROXY_TOKEN")
+response = client.chat.completions.create(
+    model="gpt-4.1",
+    messages=[{"role": "user", "content": "Hello"}],
+    max_tokens=128,
+)
+print(response.choices[0].message.content)
+```
+
+- 支持 Chat Completions 的普通响应、SSE 流、函数工具调用及其结果回传，以及模型支持的图片和结构化输出。`max_completion_tokens` 优先于 `max_tokens`，转换上游接口时保留该限额；省略时使用上游默认值，不自行填入模型最大值。
+- 流式请求只有设置 `stream_options={"include_usage": True}` 才向客户端输出 usage；普通 chunk 的 `usage` 为 `null`，统计信息单独放在 `choices: []` 的 chunk 中。上游流异常或提前关闭会返回错误，不伪造正常完成。
+- 支持 `POST /v1/responses`，包括 `input` 字符串和 `input=[{"role": "user", "content": "..."}]` 简写。仅支持 Responses 的模型会自动转换为 Chat Completions 格式供现有客户端使用；这条转换路径只支持 `n=1`，对无法转换的 `seed`、`logit_bias`、`thinking_budget`、`logprobs: true` 明确返回 `400`。
+- Responses 的 `store`、`background`、`previous_response_id` 按原值透传，由 Copilot 决定支持情况，代理不自行禁用或覆盖；省略的选项也不会被补写。实测当前账号的 `gpt-5.3-codex` 拒绝 `store: true` 和 `previous_response_id`，应在 `input` 中携带历史。
+- embeddings 按客户端指定的 `encoding_format` 返回浮点数组或 float32 little-endian 的 Base64 字符串；即使上游忽略该选项，代理也会转换输出格式。
+- 错误采用 OpenAI 风格的 `error.message/type/param/code`，保留上游错误码及 `Retry-After`。无效 JSON / 已校验字段返回 `400`；未知 API 路径返回 JSON `404`，不会误返回 Dashboard HTML。
+- 兼容范围限定为 `POST /v1/chat/completions`、`POST /v1/responses`、`GET /v1/models`、`POST /v1/embeddings`。具体模型的参数、工具、图片、结构化输出和 embeddings 能力以 Copilot 上游为准，不额外实现音频、文件、Batch、Assistants 等其他产品接口。
+
 ### 多 token 鉴权与配额（新）
 - **三级角色模型**：`super`（超级管理员，文件存储）/ `admin`（管理员，可管理普通 token）/ `user`（仅可查看自身）。
 - **token 持久化**：除文件保存的超管 token 外，新增 token 通过 SQLite 存储，仅哈希落库（SHA-256，常量时间比对）。
@@ -414,18 +438,22 @@ curl -sS http://localhost:4141/v1/responses \
   -d '{"model":"gpt-5.5","input":"hello"}'
 ```
 
-> 服务端会话状态（`previous_response_id`、`store: true`、`background: true`）**不**支持，传入会返回 `400`。代理始终无状态。
+> `previous_response_id`、`store`、`background` 由 Copilot 上游处理。代理不维护独立的响应存储或后台任务，不覆盖客户端选项，也不承诺上游未支持的状态行为；上游拒绝时保留其错误码和参数信息。
 
 ### 2. `/chat/completions` 与 `/v1/messages` 透明 fallback
 
 只会说 Chat Completions 或 Anthropic Messages 协议的客户端（Claude Code 等）无须改动即可使用 Responses-only 模型。代理通过两层判断决定是否走 `/responses`：
 
-1. **自动路由**：启动以及每次模型刷新时扫描 `/models`；声明支持 `/responses` 的模型优先走该端点，只有 `/responses` 的模型也能直接使用。
+1. **自动路由**：启动以及每次模型刷新时扫描 `/models`；仅支持 `/responses`、不支持 `/chat/completions` 的模型走转换路径。同时支持两个端点的模型保留原生 Chat Completions 路径，避免转换损失参数和返回信息。
 2. **运行时兜底**：若 `/chat/completions` 上游返回 `unsupported_api_for_model`，自动改走 `/responses` 重试，并把模型加入运行时缓存，后续直接走新路径。
 
 这两条路径上，客户端始终看到标准 `chat.completion`（或 Anthropic Messages）响应，翻译在代理内部完成。流式 fallback 仅在上游首字节前生效；若上游已经开始返回 SSE，错误透传给客户端。
 
-对 `supported_endpoints` 明确包含 `/v1/messages` 的模型，代理直接透传原生 Anthropic 协议，以保留 thinking/signature、prompt cache 统计和 `copilot_usage`；其他模型继续通过 Chat Completions 或 Responses 转译。
+对 `supported_endpoints` 明确包含 `/v1/messages` 或 `/messages` 的模型，代理直接透传原生 Anthropic 协议，保留文档、thinking/signature、cache_control、服务端工具、未知扩展字段和 `copilot_usage`，并转发 `anthropic-version`、`anthropic-beta` 及上游请求 ID、限流响应头。模型 ID 优先精确匹配；带日期的 Claude 别名仅在模型目录中存在对应版本时才转换，不会降级到旧版本。
+
+其他模型通过 Chat Completions 或 Responses 转译，支持文本、URL/base64 图片、工具调用及块数组工具结果。文档、服务端工具、adaptive thinking、结构化输出及无法映射的顶层选项会返回 `400 invalid_request_error`，不会静默丢弃。流式响应支持并行工具和最终缓存用量；上游错误或连接截断返回 Anthropic `error` 事件，不伪造正常的 `message_stop`。两个 Anthropic 端点的 HTTP 错误均使用 `{ "type": "error", "error": { "type": "...", "message": "..." }, "request_id": "..." }` 格式。
+
+`POST /v1/messages/count_tokens` 不要求 `max_tokens`，且不计入代理计费。所有已知模型均优先请求上游计数接口，不依赖模型是否支持原生 Messages 生成；仅在该接口返回 `404`、`405` 或 `501` 且不是模型不存在时降级为本地估算。响应头 `x-token-count-estimated: false` 表示上游结果，`true` 表示估算；本地 tokenizer 并非 Anthropic 官方 tokenizer，不能保证与 Claude 实际用量完全一致。鉴权、限流及其他上游错误不会被估算结果掩盖，未知模型或计数失败也不会返回伪造的成功结果。
 
 ## 数据库
 

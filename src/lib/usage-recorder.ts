@@ -14,9 +14,9 @@ interface PendingUsage {
   model?: string | null
   recorded?: boolean
   // When false, the request is logged for audit but its tokens are NOT
-  // counted toward the auth token's lifetime/monthly quota. Used by purely
-  // local endpoints like `/v1/messages/count_tokens` that do not consume
-  // upstream Copilot quota. Defaults to true (billable) when unset.
+  // counted toward the auth token's lifetime/monthly quota. Used by
+  // non-generating endpoints like `/v1/messages/count_tokens`.
+  // Defaults to true (billable) when unset.
   billable?: boolean
 }
 

@@ -16,6 +16,8 @@ import type {
   ResponsesTool,
 } from "~/services/copilot/create-responses"
 
+import { HTTPError } from "~/lib/error"
+
 export function chatRequestToResponses(
   chat: ChatCompletionsPayload,
 ): ResponsesPayload {
@@ -50,7 +52,7 @@ export function chatRequestToResponses(
         input.push({
           type: "message",
           role: "assistant",
-          content: [{ type: "input_text", text }],
+          content: [{ type: "output_text", text }],
         })
       }
       for (const call of msg.tool_calls) {
@@ -67,7 +69,7 @@ export function chatRequestToResponses(
     input.push({
       type: "message",
       role: msg.role,
-      content: messageContentToResponses(msg.content),
+      content: messageContentToResponses(msg.content, msg.role === "assistant"),
     })
   }
 
@@ -93,6 +95,7 @@ function applyResponsesOptions(
 ): void {
   if (systemTexts.length > 0) out.instructions = systemTexts.join("\n\n")
   if (isPresent(chat.stream)) out.stream = chat.stream
+  if (isPresent(chat.store)) out.store = chat.store
   applySamplingOptions(chat, out)
   applyToolOptions(chat, out)
   applyOutputOptions(chat, out)
@@ -160,19 +163,28 @@ function stringifyContent(content: Message["content"]): string {
 
 function messageContentToResponses(
   content: Message["content"],
+  assistant = false,
 ): Array<ResponsesContentPart> {
   if (content === null) return []
   if (typeof content === "string") {
-    return [{ type: "input_text", text: content }]
+    return [{ type: assistant ? "output_text" : "input_text", text: content }]
   }
   return content
-    .map((part) => translatePart(part))
+    .map((part) => translatePart(part, assistant))
     .filter(Boolean) as Array<ResponsesContentPart>
 }
 
-function translatePart(part: ContentPart): ResponsesContentPart | null {
-  if (part.type === "text") return { type: "input_text", text: part.text }
-  return { type: "input_image", image_url: part.image_url.url }
+function translatePart(
+  part: ContentPart,
+  assistant: boolean,
+): ResponsesContentPart | null {
+  if (part.type === "text")
+    return { type: assistant ? "output_text" : "input_text", text: part.text }
+  return {
+    type: "input_image",
+    image_url: part.image_url.url,
+    ...(part.image_url.detail && { detail: part.image_url.detail }),
+  }
 }
 
 function translateTool(tool: Tool): ResponsesTool {
@@ -181,6 +193,7 @@ function translateTool(tool: Tool): ResponsesTool {
     name: tool.function.name,
     description: tool.function.description,
     parameters: tool.function.parameters,
+    ...(tool.function.strict !== undefined && { strict: tool.function.strict }),
   }
 }
 
@@ -194,7 +207,17 @@ function translateToolChoice(
 export function responsesToChatResponse(
   resp: ResponsesResponse,
 ): ChatCompletionResponse {
+  if (resp.status === "failed" || resp.error) {
+    throw new HTTPError(
+      "Responses upstream failed",
+      new Response(null, { status: 502 }),
+      JSON.stringify({
+        error: resp.error ?? { message: "Responses upstream failed" },
+      }),
+    )
+  }
   const messageParts: Array<string> = []
+  const refusals: Array<string> = []
   const toolCalls: Array<{
     id: string
     type: "function"
@@ -206,6 +229,7 @@ export function responsesToChatResponse(
       const m = item
       for (const part of m.content) {
         if (part.type === "output_text") messageParts.push(part.text)
+        if (part.type === "refusal") refusals.push(part.refusal)
       }
     } else if (item.type === "function_call") {
       const fc = item
@@ -231,6 +255,7 @@ export function responsesToChatResponse(
         message: {
           role: "assistant",
           content,
+          ...(refusals.length > 0 && { refusal: refusals.join("") }),
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         },
         logprobs: null,
@@ -248,9 +273,12 @@ function responsesFinishReason(
   response: ResponsesResponse,
   hasToolCalls: boolean,
 ): ChatCompletionResponse["choices"][number]["finish_reason"] {
+  if (response.status === "incomplete") {
+    return response.incomplete_details?.reason === "content_filter" ?
+        "content_filter"
+      : "length"
+  }
   if (hasToolCalls) return "tool_calls"
-  if (response.status === "incomplete") return "length"
-  if (response.status === "failed") return "content_filter"
   return "stop"
 }
 
@@ -315,21 +343,122 @@ interface FailedPayload {
   error?: { message?: string }
 }
 
+interface StreamToolState {
+  callIndex: Map<string, number>
+  outputIndexToCallIndex: Map<number, number>
+  nextIndex: number
+  sawToolCall: boolean
+}
+
+function toolAddedDelta(payload: ItemAddedPayload, state: StreamToolState) {
+  const item = payload.item
+  if (item?.type !== "function_call" || !item.call_id) return null
+  state.sawToolCall = true
+  const index = state.nextIndex++
+  state.callIndex.set(item.call_id, index)
+  if (item.id) state.callIndex.set(item.id, index)
+  if (payload.output_index !== undefined)
+    state.outputIndexToCallIndex.set(payload.output_index, index)
+  return {
+    tool_calls: [
+      {
+        index,
+        id: item.call_id,
+        type: "function",
+        function: { name: item.name ?? "", arguments: "" },
+      },
+    ],
+  }
+}
+
+function toolArgumentsDelta(
+  payload: FnArgsDeltaPayload,
+  state: StreamToolState,
+) {
+  if (typeof payload.delta !== "string") return null
+  const index =
+    (payload.call_id ? state.callIndex.get(payload.call_id) : undefined)
+    ?? (payload.item_id ? state.callIndex.get(payload.item_id) : undefined)
+    ?? (payload.output_index === undefined ?
+      undefined
+    : state.outputIndexToCallIndex.get(payload.output_index))
+  if (index === undefined)
+    throw new Error("Received tool arguments without a matching tool call")
+  state.sawToolCall = true
+  return { tool_calls: [{ index, function: { arguments: payload.delta } }] }
+}
+
+function finalStreamFields(completed: ResponsesCompletedEvent) {
+  const response = completed.response
+  return {
+    usage: response ? responsesUsageToChatUsage(response) : undefined,
+    copilot_usage: completed.copilot_usage ?? response?.copilot_usage,
+    copilot_info_messages:
+      completed.copilot_info_messages ?? response?.copilot_info_messages,
+  }
+}
+
+function streamError(payload: Record<string, unknown>) {
+  const failed = payload as FailedPayload
+  const message =
+    failed.response?.error?.message
+    ?? failed.error?.message
+    ?? (typeof payload.message === "string" ? payload.message : undefined)
+    ?? "responses upstream error"
+  return { error: { message, type: "upstream_error", param: null, code: null } }
+}
+
+function streamFinishReason(
+  event: string,
+  response: ResponsesResponse | undefined,
+  hasTools: boolean,
+) {
+  if (event === "response.incomplete" || response?.status === "incomplete") {
+    return response?.incomplete_details?.reason === "content_filter" ?
+        "content_filter"
+      : "length"
+  }
+  if (hasTools) return "tool_calls"
+  return "stop"
+}
+
+function eventDelta(
+  event: string,
+  payload: Record<string, unknown>,
+  state: StreamToolState,
+): Record<string, unknown> | null {
+  if (event === "response.output_text.delta") {
+    const delta = (payload as TextDeltaPayload).delta
+    return typeof delta === "string" ? { content: delta } : null
+  }
+  if (event === "response.refusal.delta") {
+    return typeof payload.delta === "string" ? { refusal: payload.delta } : null
+  }
+  if (event === "response.output_item.added")
+    return toolAddedDelta(payload as ItemAddedPayload, state)
+  if (event === "response.function_call_arguments.delta")
+    return toolArgumentsDelta(payload as FnArgsDeltaPayload, state)
+  consola.debug("responsesStreamToChatStream: ignoring event", event)
+  return null
+}
+
 // Maps Copilot /responses SSE events to OpenAI-style chat.completion.chunk SSE.
 // Yields objects shaped like { data: string } to match `events()` from
 // fetch-event-stream so callers (chat-completions handler) can pipe them through
-// without changes. Always ends with a `{ data: "[DONE]" }` sentinel.
+// without changes. Truncated streams throw instead of inventing a completion.
 export async function* responsesStreamToChatStream(
   upstream: AsyncIterable<UpstreamSseEvent>,
   model: string,
 ): AsyncGenerator<ChatChunkOut> {
   let id = `chatcmpl-stream-${Date.now()}`
   let emittedRole = false
-  let sawToolCall = false
-  // call_id → index assignment so deltas can be merged client-side
-  const callIndex = new Map<string, number>()
-  const outputIndexToCallIndex = new Map<number, number>()
-  let nextIndex = 0
+  const tools: StreamToolState = {
+    callIndex: new Map(),
+    outputIndexToCallIndex: new Map(),
+    nextIndex: 0,
+    sawToolCall: false,
+  }
+  const created = Math.floor(Date.now() / 1000)
 
   const baseChunk = (
     delta: Record<string, unknown>,
@@ -338,7 +467,7 @@ export async function* responsesStreamToChatStream(
     JSON.stringify({
       id,
       object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
+      created,
       model,
       choices: [{ index: 0, delta, finish_reason: finish, logprobs: null }],
     })
@@ -363,157 +492,44 @@ export async function* responsesStreamToChatStream(
         break
       }
 
-      case "response.output_text.delta": {
-        const delta = (payload as TextDeltaPayload).delta
-        if (typeof delta !== "string") break
-        if (!emittedRole) {
-          emittedRole = true
-          yield { data: baseChunk({ role: "assistant", content: delta }) }
-        } else {
-          yield { data: baseChunk({ content: delta }) }
-        }
-        break
-      }
-
-      case "response.output_item.added": {
-        const item = (payload as ItemAddedPayload).item
-        if (item?.type === "function_call" && item.call_id) {
-          sawToolCall = true
-          const idx = nextIndex++
-          callIndex.set(item.call_id, idx)
-          if (item.id) callIndex.set(item.id, idx)
-          const outputIndex = (payload as ItemAddedPayload).output_index
-          if (outputIndex !== undefined)
-            outputIndexToCallIndex.set(outputIndex, idx)
-          yield {
-            data: baseChunk({
-              tool_calls: [
-                {
-                  index: idx,
-                  id: item.call_id,
-                  type: "function",
-                  function: { name: item.name ?? "", arguments: "" },
-                },
-              ],
-            }),
-          }
-        }
-        break
-      }
-
-      case "response.function_call_arguments.delta": {
-        const p = payload as FnArgsDeltaPayload
-        const delta = p.delta
-        if (typeof delta !== "string") break
-        const idx =
-          (p.call_id ? callIndex.get(p.call_id) : undefined)
-          ?? (p.item_id ? callIndex.get(p.item_id) : undefined)
-          ?? (p.output_index === undefined ?
-            undefined
-          : outputIndexToCallIndex.get(p.output_index))
-          ?? 0
-        sawToolCall = true
-        yield {
-          data: baseChunk({
-            tool_calls: [
-              {
-                index: idx,
-                function: { arguments: delta },
-              },
-            ],
-          }),
-        }
-        break
-      }
-
       case "response.completed":
       case "response.incomplete": {
         const completed = payload as ResponsesCompletedEvent
-        const response = completed.response
-        const usage = response?.usage
-        const incomplete =
-          evt.event === "response.incomplete"
-          || response?.status === "incomplete"
-        let finishReason = "stop"
-        if (sawToolCall) finishReason = "tool_calls"
-        else if (incomplete) finishReason = "length"
-        const finalChoices = [
-          {
-            index: 0,
-            delta: {},
-            finish_reason: finishReason,
-            logprobs: null,
-          },
-        ]
-        const final = JSON.stringify({
-          id,
-          object: "chat.completion.chunk",
-          created: Math.floor(Date.now() / 1000),
-          model,
-          choices: finalChoices,
-          usage:
-            usage ?
-              {
-                prompt_tokens: usage.input_tokens,
-                completion_tokens: usage.output_tokens,
-                total_tokens: usage.total_tokens,
-                ...(usage.input_tokens_details && {
-                  prompt_tokens_details: {
-                    cached_tokens:
-                      usage.input_tokens_details.cached_tokens ?? 0,
-                    ...(usage.input_tokens_details.cache_write_tokens
-                      !== undefined && {
-                      cache_creation_input_tokens:
-                        usage.input_tokens_details.cache_write_tokens,
-                    }),
-                  },
-                }),
-                ...(usage.output_tokens_details?.reasoning_tokens
-                  !== undefined && {
-                  reasoning_tokens:
-                    usage.output_tokens_details.reasoning_tokens,
-                  completion_tokens_details: {
-                    reasoning_tokens:
-                      usage.output_tokens_details.reasoning_tokens,
-                  },
-                }),
-              }
-            : undefined,
-          copilot_usage: completed.copilot_usage ?? response?.copilot_usage,
-          copilot_info_messages:
-            completed.copilot_info_messages ?? response?.copilot_info_messages,
-        })
-        yield { data: final }
+        const finishReason = streamFinishReason(
+          evt.event,
+          completed.response,
+          tools.sawToolCall,
+        )
+        const chunk = JSON.parse(baseChunk({}, finishReason)) as Record<
+          string,
+          unknown
+        >
+        yield {
+          data: JSON.stringify({ ...chunk, ...finalStreamFields(completed) }),
+        }
         yield { data: "[DONE]" }
         return
       }
 
       case "response.failed":
+      case "error":
       case "response.error": {
-        const p = payload as FailedPayload
-        const message =
-          p.response?.error?.message
-          ?? p.error?.message
-          ?? "responses upstream error"
-        yield {
-          data: JSON.stringify({
-            error: { message, type: "upstream_error" },
-          }),
-        }
+        yield { data: JSON.stringify(streamError(payload)) }
         yield { data: "[DONE]" }
         return
       }
 
       default: {
-        // Silently ignore other event types (in_progress, content_part.*, etc.)
-        consola.debug("responsesStreamToChatStream: ignoring event", evt.event)
+        const delta = eventDelta(evt.event, payload, tools)
+        if (!delta) break
+        if (!emittedRole) {
+          emittedRole = true
+          yield { data: baseChunk({ role: "assistant" }) }
+        }
+        yield { data: baseChunk(delta) }
       }
     }
   }
 
-  // Upstream ended without `response.completed` — close gracefully.
-  yield {
-    data: baseChunk({}, sawToolCall ? "tool_calls" : "stop"),
-  }
-  yield { data: "[DONE]" }
+  throw new Error("Upstream Responses stream ended before a terminal event")
 }

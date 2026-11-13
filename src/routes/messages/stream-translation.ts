@@ -5,18 +5,93 @@ import {
   type AnthropicStreamEventData,
   type AnthropicStreamState,
 } from "./anthropic-types"
+import { parseToolArguments, translateUsage } from "./non-stream-translation"
 
-function isToolBlockOpen(state: AnthropicStreamState): boolean {
-  if (!state.contentBlockOpen) {
-    return false
-  }
-  // Check if the current block index corresponds to any known tool call
-  return Object.values(state.toolCalls).some(
-    (tc) => tc.anthropicBlockIndex === state.contentBlockIndex,
-  )
+function closeTextBlock(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+) {
+  if (!state.contentBlockOpen) return
+  events.push({ type: "content_block_stop", index: state.contentBlockIndex })
+  state.contentBlockIndex++
+  state.contentBlockOpen = false
 }
 
-// eslint-disable-next-line complexity
+function translateToolDeltas(
+  calls: NonNullable<
+    ChatCompletionChunk["choices"][number]["delta"]["tool_calls"]
+  >,
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+) {
+  for (const call of calls) {
+    const tool = (state.toolCalls[call.index] ??= {
+      id: "",
+      name: "",
+      anthropicBlockIndex: -1,
+      arguments: "",
+    })
+    if (call.id) tool.id = call.id
+    if (call.function?.name) {
+      if (tool.open)
+        throw new Error(
+          "Upstream changed a tool name after starting its arguments",
+        )
+      tool.name += call.function.name
+    }
+    const argumentsDelta = call.function?.arguments ?? ""
+    tool.arguments = (tool.arguments ?? "") + argumentsDelta
+    if (!tool.open && tool.arguments && tool.id && tool.name) {
+      closeTextBlock(state, events)
+      tool.anthropicBlockIndex = state.contentBlockIndex++
+      tool.open = true
+      events.push(
+        {
+          type: "content_block_start",
+          index: tool.anthropicBlockIndex,
+          content_block: {
+            type: "tool_use",
+            id: tool.id,
+            name: tool.name,
+            input: {},
+          },
+        },
+        {
+          type: "content_block_delta",
+          index: tool.anthropicBlockIndex,
+          delta: { type: "input_json_delta", partial_json: tool.arguments },
+        },
+      )
+    } else if (tool.open && argumentsDelta) {
+      events.push({
+        type: "content_block_delta",
+        index: tool.anthropicBlockIndex,
+        delta: { type: "input_json_delta", partial_json: argumentsDelta },
+      })
+    }
+  }
+}
+
+function closeToolBlocks(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+) {
+  for (const [index, tool] of Object.entries(state.toolCalls)) {
+    if (!tool.open && tool.id && tool.name && !tool.arguments) {
+      translateToolDeltas(
+        [{ index: Number(index), function: { arguments: "{}" } }],
+        state,
+        events,
+      )
+    }
+    if (!tool.open) throw new Error("Upstream returned an incomplete tool call")
+    if (state.finishReason !== "length")
+      parseToolArguments(tool.arguments ?? "")
+    events.push({ type: "content_block_stop", index: tool.anthropicBlockIndex })
+    tool.open = false
+  }
+}
+
 export function translateChunkToAnthropicEvents(
   chunk: ChatCompletionChunk,
   state: AnthropicStreamState,
@@ -41,38 +116,15 @@ export function translateChunkToAnthropicEvents(
         model: chunk.model,
         stop_reason: null,
         stop_sequence: null,
-        usage: {
-          input_tokens:
-            (chunk.usage?.prompt_tokens ?? 0)
-            - (chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0),
-          output_tokens: 0, // Will be updated in message_delta when finished
-          ...(chunk.usage?.prompt_tokens_details?.cached_tokens
-            !== undefined && {
-            cache_read_input_tokens:
-              chunk.usage.prompt_tokens_details.cached_tokens,
-          }),
-          ...(chunk.usage?.prompt_tokens_details?.cache_creation_input_tokens
-            !== undefined && {
-            cache_creation_input_tokens:
-              chunk.usage.prompt_tokens_details.cache_creation_input_tokens,
-          }),
-        },
+        usage: { ...translateUsage(chunk.usage), output_tokens: 0 },
       },
     })
     state.messageStartSent = true
   }
 
-  if (delta.content) {
-    if (isToolBlockOpen(state)) {
-      // A tool block was open, so close it before starting a text block.
-      events.push({
-        type: "content_block_stop",
-        index: state.contentBlockIndex,
-      })
-      state.contentBlockIndex++
-      state.contentBlockOpen = false
-    }
-
+  if (delta.refusal) state.refusal = true
+  const text = delta.content ?? delta.refusal
+  if (text) {
     if (!state.contentBlockOpen) {
       events.push({
         type: "content_block_start",
@@ -90,77 +142,25 @@ export function translateChunkToAnthropicEvents(
       index: state.contentBlockIndex,
       delta: {
         type: "text_delta",
-        text: delta.content,
+        text,
       },
     })
   }
 
   if (delta.tool_calls) {
-    for (const toolCall of delta.tool_calls) {
-      if (toolCall.id && toolCall.function?.name) {
-        // New tool call starting.
-        if (state.contentBlockOpen) {
-          // Close any previously open block.
-          events.push({
-            type: "content_block_stop",
-            index: state.contentBlockIndex,
-          })
-          state.contentBlockIndex++
-          state.contentBlockOpen = false
-        }
-
-        const anthropicBlockIndex = state.contentBlockIndex
-        state.toolCalls[toolCall.index] = {
-          id: toolCall.id,
-          name: toolCall.function.name,
-          anthropicBlockIndex,
-        }
-
-        events.push({
-          type: "content_block_start",
-          index: anthropicBlockIndex,
-          content_block: {
-            type: "tool_use",
-            id: toolCall.id,
-            name: toolCall.function.name,
-            input: {},
-          },
-        })
-        state.contentBlockOpen = true
-      }
-
-      if (toolCall.function?.arguments) {
-        const toolCallInfo = state.toolCalls[toolCall.index]
-        // Tool call can still be empty
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (toolCallInfo) {
-          events.push({
-            type: "content_block_delta",
-            index: toolCallInfo.anthropicBlockIndex,
-            delta: {
-              type: "input_json_delta",
-              partial_json: toolCall.function.arguments,
-            },
-          })
-        }
-      }
-    }
+    translateToolDeltas(delta.tool_calls, state, events)
   }
 
   if (choice.finish_reason) {
-    // Capture stop_reason but do NOT emit message_delta / message_stop here.
-    // The handler emits the closing events in its finally block so that:
-    //   1) usage is sourced from the aggregated counters (some upstreams put
-    //      `usage` in a separate chunk after `finish_reason`); and
-    //   2) emission is guaranteed exactly once even on early disconnect.
-    state.finishReason = choice.finish_reason
-    if (state.contentBlockOpen) {
-      events.push({
-        type: "content_block_stop",
-        index: state.contentBlockIndex,
-      })
-      state.contentBlockOpen = false
-    }
+    // Final events wait for trailing usage and a successful upstream completion.
+    state.finishReason = state.refusal ? "content_filter" : choice.finish_reason
+    if (
+      state.finishReason === "stop"
+      && Object.keys(state.toolCalls).length > 0
+    )
+      state.finishReason = "tool_calls"
+    closeTextBlock(state, events)
+    closeToolBlocks(state, events)
   }
 
   return events

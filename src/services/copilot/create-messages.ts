@@ -17,6 +17,8 @@ interface CreateMessagesOptions {
   initiator: "user" | "agent"
   anthropicVersion?: string
   anthropicBeta?: string
+  endpoint?: "/v1/messages" | "/v1/messages/count_tokens"
+  onResponse?: (response: Response) => void
 }
 
 export async function createMessages<TResponse>(
@@ -34,19 +36,30 @@ export async function createMessages<TResponse>(
     headers["anthropic-beta"] = options.anthropicBeta
   }
 
-  const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    signal: options.signal,
-  })
+  const response = await fetch(
+    `${copilotBaseUrl(state)}${options.endpoint ?? "/v1/messages"}`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: options.signal,
+    },
+  )
+  options.onResponse?.(response)
 
   if (!response.ok) {
     const bodyText = await response.text()
     throw new HTTPError("Failed to create messages", response, bodyText)
   }
 
-  if (options.stream) return events(response)
+  if (options.stream) {
+    if (!response.headers.get("content-type")?.includes("text/event-stream"))
+      throw new HTTPError(
+        "Upstream did not return a Messages event stream",
+        new Response(null, { status: 502 }),
+      )
+    return events(response)
+  }
 
   return (await response.json()) as TResponse
 }
