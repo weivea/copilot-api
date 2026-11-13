@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { api } from "../api/client"
+import { ReleaseVersion } from "../components/ReleaseVersion"
 import { useAuth } from "../contexts/AuthContext"
 
 const TTL_KEY = "cpk_preferred_ttl"
@@ -45,6 +46,7 @@ export function Login() {
         }}
       >
         <h2 style={{ marginTop: 0 }}>Copilot API Dashboard</h2>
+        <ReleaseVersion />
         <div className="field">
           <label>Auth token</label>
           <input

@@ -12,6 +12,7 @@ const Tokens = lazy(() => import("./pages/Tokens"))
 const Models = lazy(() => import("./pages/Models"))
 const Settings = lazy(() => import("./pages/Settings"))
 const Docs = lazy(() => import("./pages/Docs"))
+const Version = lazy(() => import("./pages/Version"))
 
 export function App() {
   const { me, loading } = useAuth()
@@ -33,6 +34,7 @@ export function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/copilot-models" element={<Models />} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/version" element={<Version />} />
           <Route
             path="/github-auth"
             element={

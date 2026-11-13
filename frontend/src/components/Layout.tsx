@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { NavLink } from "react-router-dom"
 
 import { useAuth } from "../contexts/AuthContext"
+import { ReleaseVersion } from "./ReleaseVersion"
 
 export function Layout({ children }: { children: ReactNode }) {
   const { me, logout } = useAuth()
@@ -20,11 +21,13 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/copilot-models">Models</NavLink>
           <NavLink to="/docs">Docs</NavLink>
           <NavLink to="/settings">Settings</NavLink>
+          <NavLink to="/version">Version</NavLink>
           {me.role === "super" && (
             <NavLink to="/github-auth">GitHub Auth</NavLink>
           )}
         </nav>
         <div className="spacer" />
+        <ReleaseVersion />
         <button onClick={() => void logout()}>Logout</button>
       </aside>
       <main className="main">{children}</main>
