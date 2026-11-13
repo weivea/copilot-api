@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import path from "node:path"
 
+import { anthropicErrors } from "./lib/anthropic-error"
 import { authMiddleware } from "./lib/auth-middleware"
 import { requireCopilotReady } from "./lib/copilot-availability"
 import { redactingLogger } from "./lib/redacting-logger"
@@ -19,6 +20,7 @@ export const server = new Hono()
 
 server.use(redactingLogger())
 server.use(cors())
+server.use("/v1/messages/*", anthropicErrors())
 
 server.get("/healthz", (c) => c.text("ok"))
 

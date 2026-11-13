@@ -449,7 +449,11 @@ curl -sS http://localhost:4141/v1/responses \
 
 这两条路径上，客户端始终看到标准 `chat.completion`（或 Anthropic Messages）响应，翻译在代理内部完成。流式 fallback 仅在上游首字节前生效；若上游已经开始返回 SSE，错误透传给客户端。
 
-对 `supported_endpoints` 明确包含 `/v1/messages` 的模型，代理直接透传原生 Anthropic 协议，以保留 thinking/signature、prompt cache 统计和 `copilot_usage`；其他模型继续通过 Chat Completions 或 Responses 转译。
+对 `supported_endpoints` 明确包含 `/v1/messages` 或 `/messages` 的模型，代理直接透传原生 Anthropic 协议，保留文档、thinking/signature、cache_control、服务端工具、未知扩展字段和 `copilot_usage`，并转发 `anthropic-version`、`anthropic-beta` 及上游请求 ID、限流响应头。模型 ID 优先精确匹配；带日期的 Claude 别名仅在模型目录中存在对应版本时才转换，不会降级到旧版本。
+
+其他模型通过 Chat Completions 或 Responses 转译，支持文本、URL/base64 图片、工具调用及块数组工具结果。文档、服务端工具、adaptive thinking、结构化输出及无法映射的顶层选项会返回 `400 invalid_request_error`，不会静默丢弃。流式响应支持并行工具和最终缓存用量；上游错误或连接截断返回 Anthropic `error` 事件，不伪造正常的 `message_stop`。两个 Anthropic 端点的 HTTP 错误均使用 `{ "type": "error", "error": { "type": "...", "message": "..." }, "request_id": "..." }` 格式。
+
+`POST /v1/messages/count_tokens` 不要求 `max_tokens`，且不计入代理计费。所有已知模型均优先请求上游计数接口，不依赖模型是否支持原生 Messages 生成；仅在该接口返回 `404`、`405` 或 `501` 且不是模型不存在时降级为本地估算。响应头 `x-token-count-estimated: false` 表示上游结果，`true` 表示估算；本地 tokenizer 并非 Anthropic 官方 tokenizer，不能保证与 Claude 实际用量完全一致。鉴权、限流及其他上游错误不会被估算结果掩盖，未知模型或计数失败也不会返回伪造的成功结果。
 
 ## 数据库
 

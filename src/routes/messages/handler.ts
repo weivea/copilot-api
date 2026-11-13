@@ -11,7 +11,7 @@ import {
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
-import { formatErrorWithCause } from "~/lib/utils"
+import { cacheModels, formatErrorWithCause } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -23,7 +23,6 @@ import {
 } from "~/services/copilot/create-messages"
 
 import {
-  type AnthropicMessagesPayload,
   type AnthropicResponse,
   type AnthropicStreamState,
 } from "./anthropic-types"
@@ -31,6 +30,14 @@ import {
   translateToAnthropic,
   translateToOpenAI,
 } from "./non-stream-translation"
+import {
+  forwardMessagesHeaders,
+  readMessagesPayload,
+  resolveMessagesModel,
+  supportsNativeMessages,
+  translatedMessagesPayload,
+  type NativeMessagesPayload,
+} from "./request"
 import {
   buildCopilotInfoEvent,
   translateChunkToAnthropicEvents,
@@ -40,7 +47,9 @@ import { mapOpenAIStopReasonToAnthropic } from "./utils"
 export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
-  const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  const anthropicPayload = await readMessagesPayload(c)
+  if (!state.models) await cacheModels()
+  anthropicPayload.model = resolveMessagesModel(anthropicPayload.model)
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
   if (state.manualApprove) {
@@ -51,7 +60,9 @@ export async function handleCompletion(c: Context) {
     return handleNativeCompletion(c, anthropicPayload)
   }
 
-  const openAIPayload = translateToOpenAI(anthropicPayload)
+  const openAIPayload = translateToOpenAI(
+    translatedMessagesPayload(anthropicPayload),
+  )
   consola.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
@@ -64,7 +75,7 @@ export async function handleCompletion(c: Context) {
   let response: Awaited<ReturnType<typeof createChatCompletions>>
   try {
     response = await createChatCompletions(openAIPayload, {
-      signal: upstreamController.signal,
+      signal: AbortSignal.any([c.req.raw.signal, upstreamController.signal]),
     })
   } catch (error) {
     consola.error(
@@ -121,15 +132,7 @@ export async function handleCompletion(c: Context) {
   )
 }
 
-function supportsNativeMessages(model: string): boolean {
-  return (
-    state.models?.data
-      .find((candidate) => candidate.id === model)
-      ?.supported_endpoints?.includes("/v1/messages") ?? false
-  )
-}
-
-function isNativeAgentCall(payload: AnthropicMessagesPayload): boolean {
+function isNativeAgentCall(payload: NativeMessagesPayload): boolean {
   return payload.messages.some(
     (message) =>
       message.role === "assistant"
@@ -151,17 +154,18 @@ function totalNativeInputTokens(
 
 async function handleNativeCompletion(
   c: Context,
-  payload: AnthropicMessagesPayload,
+  payload: NativeMessagesPayload,
 ) {
   const upstreamController = new AbortController()
   let upstream: Awaited<ReturnType<typeof createMessages<AnthropicResponse>>>
   try {
     upstream = await createMessages<AnthropicResponse>(payload, {
-      signal: upstreamController.signal,
+      signal: AbortSignal.any([c.req.raw.signal, upstreamController.signal]),
       stream: payload.stream === true,
       initiator: isNativeAgentCall(payload) ? "agent" : "user",
       anthropicVersion: c.req.header("anthropic-version"),
       anthropicBeta: c.req.header("anthropic-beta"),
+      onResponse: (response) => forwardMessagesHeaders(c, response),
     })
   } catch (error) {
     consola.error(
@@ -198,13 +202,7 @@ async function handleNativeCompletion(
         requestedModel: payload.model,
         upstreamController,
       }),
-    (error) => {
-      consola.error(
-        "streamSSE onError (native messages):",
-        formatErrorWithCause(error),
-      )
-      return Promise.resolve()
-    },
+    (error, stream) => handleAnthropicStreamFatalError(error, stream),
   )
 }
 
@@ -216,6 +214,7 @@ interface NativeStreamUsage {
 }
 
 interface NativeMessageStreamPayload {
+  type?: string
   message?: Partial<AnthropicResponse>
   usage?: Partial<AnthropicResponse["usage"]>
   copilot_usage?: AnthropicResponse["copilot_usage"]
@@ -256,17 +255,20 @@ interface NativeStreamMeta {
 }
 
 function captureNativeEvent(
-  data: string,
+  data: string | undefined,
   usage: NativeStreamUsage,
   meta: NativeStreamMeta,
-): void {
-  let parsed: NativeMessageStreamPayload
+): string | undefined {
+  if (!data) return
+  let value: unknown
   try {
-    parsed = JSON.parse(data) as NativeMessageStreamPayload
+    value = JSON.parse(data)
   } catch {
     // Metadata capture is best-effort; the original event is still forwarded.
     return
   }
+  if (typeof value !== "object" || value === null) return
+  const parsed = value as NativeMessageStreamPayload
 
   if (parsed.message?.model) meta.model = parsed.message.model
   captureNativeUsage(parsed.message?.usage, usage)
@@ -283,6 +285,7 @@ function captureNativeEvent(
     pickCostNanoAiu(parsed)
     ?? pickCostNanoAiu(parsed.message)
     ?? meta.costNanoAiu
+  return parsed.type
 }
 
 async function pipeNativeAnthropicStream(
@@ -301,6 +304,9 @@ async function pipeNativeAnthropicStream(
     costNanoAiu: null,
   }
   const abortState = { aborted: false }
+  let terminal = false
+  const active = () =>
+    !abortState.aborted && !c.req.raw.signal.aborted && !stream.closed
 
   stream.onAbort(() => {
     abortState.aborted = true
@@ -319,7 +325,8 @@ async function pipeNativeAnthropicStream(
   try {
     for await (const rawEvent of response) {
       if (abortState.aborted) break
-      if (rawEvent.data) captureNativeEvent(rawEvent.data, usage, meta)
+      const type = captureNativeEvent(rawEvent.data, usage, meta)
+      if (isNativeTerminalEvent(rawEvent.event ?? type)) terminal = true
       if (rawEvent.data !== undefined) {
         await stream.writeSSE({
           data: rawEvent.data,
@@ -329,12 +336,14 @@ async function pipeNativeAnthropicStream(
         })
       }
     }
+    if (!terminal && active())
+      throw new Error("Upstream Messages stream ended before message_stop")
   } catch (error) {
     consola.error(
       "Upstream native messages stream failed:",
       formatErrorWithCause(error),
     )
-    if (!abortState.aborted && !stream.closed) {
+    if (active() && !terminal) {
       const message = error instanceof Error ? error.message : String(error)
       await stream.writeSSE({
         event: "error",
@@ -379,6 +388,56 @@ interface StreamMeta {
   cost: number | null
 }
 
+function captureStreamUsage(
+  chunk: ChatCompletionChunk,
+  usage: RunAnthropicStreamCtx["usage"],
+) {
+  if (!chunk.usage) return
+  const u = chunk.usage
+  usage.prompt = u.prompt_tokens ?? usage.prompt
+  usage.completion = u.completion_tokens ?? usage.completion
+  usage.total = u.total_tokens ?? usage.total
+  usage.cached = u.prompt_tokens_details?.cached_tokens ?? usage.cached
+  usage.cacheCreation =
+    u.prompt_tokens_details?.cache_creation_input_tokens ?? usage.cacheCreation
+}
+
+async function finalizeAnthropicStream(
+  stream: SSEStreamingApi,
+  state: AnthropicStreamState,
+  usage: RunAnthropicStreamCtx["usage"],
+) {
+  state.finalEventsSent = true
+  const write = (event: string, data: unknown) =>
+    stream.writeSSE({ event, data: JSON.stringify(data) })
+  await emitCopilotInfoIfAny(state, write)
+  await write("message_delta", {
+    type: "message_delta",
+    delta: {
+      stop_reason: mapOpenAIStopReasonToAnthropic(
+        state.finishReason as
+          | "stop"
+          | "length"
+          | "tool_calls"
+          | "content_filter",
+      ),
+      stop_sequence: null,
+    },
+    usage: {
+      input_tokens: Math.max(
+        0,
+        usage.prompt - usage.cached - usage.cacheCreation,
+      ),
+      output_tokens: usage.completion,
+      ...(usage.cached > 0 && { cache_read_input_tokens: usage.cached }),
+      ...(usage.cacheCreation > 0 && {
+        cache_creation_input_tokens: usage.cacheCreation,
+      }),
+    },
+  })
+  await write("message_stop", { type: "message_stop" })
+}
+
 function captureChunkMetadata(
   chunk: ChatCompletionChunk,
   meta: StreamMeta,
@@ -402,6 +461,27 @@ async function emitCopilotInfoIfAny(
   }
 }
 
+function isNativeTerminalEvent(type: string | undefined): boolean {
+  return type === "message_stop" || type === "error"
+}
+
+function readChatStreamChunk(data: string): ChatCompletionChunk {
+  const chunk = JSON.parse(data) as ChatCompletionChunk & {
+    error?: { message?: string }
+  }
+  if (chunk.error)
+    throw new Error(chunk.error.message ?? "Upstream chat stream failed")
+  return chunk
+}
+
+function assertChatStreamCompleted(
+  done: boolean,
+  state: AnthropicStreamState,
+): void {
+  if (!done || !state.finishReason || !state.messageStartSent)
+    throw new Error("Upstream chat stream ended before completion")
+}
+
 async function runAnthropicStream(
   stream: SSEStreamingApi,
   ctx: RunAnthropicStreamCtx,
@@ -416,9 +496,12 @@ async function runAnthropicStream(
   const meta: StreamMeta = { state: streamState, cost: null }
 
   const abortState = { aborted: false }
+  const active = () =>
+    !abortState.aborted && !c.req.raw.signal.aborted && !stream.closed
   // Idempotency guard: both the catch path and Hono's onError can call the
   // finalizer. Only the first one is allowed to write end-of-stream events.
   const finalizerState = { ran: false }
+  let done = false
   stream.onAbort(() => {
     abortState.aborted = true
     consola.debug("Client aborted Anthropic stream")
@@ -455,6 +538,7 @@ async function runAnthropicStream(
       if (abortState.aborted) break
       consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
       if (rawEvent.data === "[DONE]") {
+        done = true
         break
       }
 
@@ -462,17 +546,8 @@ async function runAnthropicStream(
         continue
       }
 
-      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      if (chunk.usage) {
-        const u = chunk.usage
-        usage.prompt = u.prompt_tokens ?? usage.prompt
-        usage.completion = u.completion_tokens ?? usage.completion
-        usage.total = u.total_tokens ?? usage.total
-        usage.cached = u.prompt_tokens_details?.cached_tokens ?? usage.cached
-        usage.cacheCreation =
-          u.prompt_tokens_details?.cache_creation_input_tokens
-          ?? usage.cacheCreation
-      }
+      const chunk = readChatStreamChunk(rawEvent.data)
+      captureStreamUsage(chunk, usage)
       captureChunkMetadata(chunk, meta, model)
       const events = translateChunkToAnthropicEvents(chunk, streamState)
 
@@ -484,12 +559,13 @@ async function runAnthropicStream(
         })
       }
     }
+    if (active()) assertChatStreamCompleted(done, streamState)
   } catch (error) {
     consola.error(
       "Upstream stream error, closing gracefully:",
       formatErrorWithCause(error),
     )
-    if (!abortState.aborted) {
+    if (active()) {
       await emitAnthropicStreamError(stream, {
         streamState,
         error,
@@ -502,68 +578,20 @@ async function runAnthropicStream(
     // calling abort() after the body is fully consumed is a no-op.
     upstreamController.abort()
 
-    // Emit the closing message_delta + message_stop with the AGGREGATED
-    // usage we collected across all chunks. This guarantees the client sees
-    // the final input/output token counts even when upstream puts `usage`
-    // in a chunk separate from `finish_reason`.
-    if (
-      !abortState.aborted
-      && !stream.closed
-      && !streamState.finalEventsSent
-      && !finalizerState.ran
-    ) {
-      streamState.finalEventsSent = true
-      const writeSafe = async (event: string, data: unknown) => {
-        try {
-          await stream.writeSSE({ event, data: JSON.stringify(data) })
-        } catch {
-          /* ignore */
-        }
+    try {
+      if (active() && !streamState.finalEventsSent && !finalizerState.ran) {
+        await finalizeAnthropicStream(stream, streamState, usage)
       }
-      if (streamState.contentBlockOpen) {
-        await writeSafe("content_block_stop", {
-          type: "content_block_stop",
-          index: streamState.contentBlockIndex,
-        })
-        streamState.contentBlockOpen = false
-      }
-      await emitCopilotInfoIfAny(streamState, writeSafe)
-      const inputTokens = Math.max(
-        0,
-        usage.prompt - usage.cached - usage.cacheCreation,
-      )
-      await writeSafe("message_delta", {
-        type: "message_delta",
-        delta: {
-          stop_reason: mapOpenAIStopReasonToAnthropic(
-            (streamState.finishReason ?? "stop") as
-              | "stop"
-              | "length"
-              | "tool_calls"
-              | "content_filter",
-          ),
-          stop_sequence: null,
-        },
-        usage: {
-          input_tokens: inputTokens,
-          output_tokens: usage.completion,
-          ...(usage.cached > 0 && { cache_read_input_tokens: usage.cached }),
-          ...(usage.cacheCreation > 0 && {
-            cache_creation_input_tokens: usage.cacheCreation,
-          }),
-        },
+    } finally {
+      recordUsage(c, {
+        model,
+        promptTokens: usage.prompt || null,
+        completionTokens: usage.completion || null,
+        totalTokens: usage.total || null,
+        costNanoAiu: meta.cost,
       })
-      await writeSafe("message_stop", { type: "message_stop" })
+      flushUsage(c)
     }
-
-    recordUsage(c, {
-      model,
-      promptTokens: usage.prompt || null,
-      completionTokens: usage.completion || null,
-      totalTokens: usage.total || null,
-      costNanoAiu: meta.cost,
-    })
-    flushUsage(c)
   }
 }
 
@@ -629,15 +657,6 @@ async function emitAnthropicStreamError(
     type: "error",
     error: { type: "api_error", message },
   })
-
-  // Always end with a proper message_stop so Claude Code finishes the turn
-  // instead of reporting "socket closed unexpectedly".
-  await writeSafe("message_delta", {
-    type: "message_delta",
-    delta: { stop_reason: "end_turn", stop_sequence: null },
-    usage: { output_tokens: 0 },
-  })
-  await writeSafe("message_stop", { type: "message_stop" })
 }
 
 const isNonStreaming = (

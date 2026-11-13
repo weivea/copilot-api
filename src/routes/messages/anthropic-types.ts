@@ -23,6 +23,7 @@ export interface AnthropicMessagesPayload {
   tool_choice?: {
     type: "auto" | "any" | "tool" | "none"
     name?: string
+    disable_parallel_tool_use?: boolean
   }
   thinking?: {
     type: "enabled" | "disabled" | "adaptive"
@@ -41,17 +42,19 @@ export interface AnthropicTextBlock {
 
 export interface AnthropicImageBlock {
   type: "image"
-  source: {
-    type: "base64"
-    media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp"
-    data: string
-  }
+  source:
+    | {
+        type: "base64"
+        media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+        data: string
+      }
+    | { type: "url"; url: string }
 }
 
 export interface AnthropicToolResultBlock {
   type: "tool_result"
   tool_use_id: string
-  content: string
+  content?: string | Array<AnthropicTextBlock | AnthropicImageBlock>
   is_error?: boolean
 }
 
@@ -94,6 +97,7 @@ export interface AnthropicTool {
   name: string
   description?: string
   input_schema: Record<string, unknown>
+  strict?: boolean
 }
 
 export interface AnthropicResponse {
@@ -224,6 +228,8 @@ export interface AnthropicStreamState {
       id: string
       name: string
       anthropicBlockIndex: number
+      open?: boolean
+      arguments?: string
     }
   }
   // Track whether the handler has already emitted the closing
@@ -232,5 +238,6 @@ export interface AnthropicStreamState {
   finalEventsSent?: boolean
   // Captured stop_reason from upstream (last non-null finish_reason).
   finishReason?: string | null
+  refusal?: boolean
   copilotInfoMessages?: Array<CopilotInfoMessage>
 }

@@ -3,6 +3,8 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 import consola from "consola"
 
+import { anthropicErrorBody } from "./anthropic-error"
+
 export class HTTPError extends Error {
   response: Response
   bodyText?: string
@@ -47,7 +49,37 @@ function errorType(status: number): string {
   return "api_error"
 }
 
-export function forwardError(c: Context, error: unknown) {
+function anthropicUpstreamError(
+  value: unknown,
+  message: string,
+  error: HTTPError,
+) {
+  const { response } = error
+  const status = safeStatus(response.status)
+  const original =
+    typeof value === "object" && value !== null ?
+      (value as Record<string, unknown>)
+    : {}
+  const upstream = upstreamError(value)
+  const requestId =
+    response.headers.get("request-id")
+    ?? response.headers.get("x-request-id")
+    ?? undefined
+  return anthropicErrorBody(
+    {
+      ...original,
+      error: { ...upstream, message },
+    },
+    status,
+    requestId,
+  )
+}
+
+export function forwardError(
+  c: Context,
+  error: unknown,
+  format: "openai" | "anthropic" = "openai",
+) {
   consola.error("Error occurred:", error)
 
   if (error instanceof HTTPError) {
@@ -64,29 +96,32 @@ export function forwardError(c: Context, error: unknown) {
     // fall back to the raw body otherwise.
     const upstream = upstreamError(errorJson)
     const status = safeStatus(error.response.status)
-    for (const header of ["retry-after", "x-request-id"]) {
+    for (const header of ["retry-after", "x-request-id", "request-id"]) {
       const value = error.response.headers.get(header)
       if (value) c.header(header, value)
     }
-    return c.json(
-      {
-        error: {
-          message:
-            typeof upstream.message === "string" ? upstream.message : errorText,
-          type:
-            typeof upstream.type === "string" ?
-              upstream.type
-            : errorType(status),
-          param: typeof upstream.param === "string" ? upstream.param : null,
-          code: typeof upstream.code === "string" ? upstream.code : null,
-        },
+    const body = {
+      error: {
+        message:
+          typeof upstream.message === "string" ? upstream.message : errorText,
+        type:
+          typeof upstream.type === "string" ? upstream.type : errorType(status),
+        param: typeof upstream.param === "string" ? upstream.param : null,
+        code: typeof upstream.code === "string" ? upstream.code : null,
       },
-      status,
-    )
+    }
+    if (format === "anthropic") {
+      return c.json(
+        anthropicUpstreamError(errorJson, body.error.message, error),
+        status,
+      )
+    }
+    return c.json(body, status)
   }
 
   return c.json(
     {
+      ...(format === "anthropic" && { type: "error" }),
       error: {
         message: errorMessage(error),
         type: "api_error",

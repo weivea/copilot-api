@@ -30,6 +30,7 @@ export const createChatCompletions = async (
   options?: { signal?: AbortSignal },
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
+  normalizeTokenLimit(payload)
 
   // Route Responses-only models (whitelisted at /models fetch time, or learned
   // via the runtime cache after a previous unsupported_api_for_model failure)
@@ -50,6 +51,17 @@ export const createChatCompletions = async (
       return callViaResponses(payload, options)
     }
     throw error
+  }
+}
+
+function normalizeTokenLimit(payload: ChatCompletionsPayload) {
+  const budget = payload.max_completion_tokens ?? payload.max_tokens
+  if (/^(?:gpt-|o[134]-)/.test(payload.model)) {
+    payload.max_completion_tokens = budget
+    delete payload.max_tokens
+  } else {
+    payload.max_tokens = budget
+    delete payload.max_completion_tokens
   }
 }
 

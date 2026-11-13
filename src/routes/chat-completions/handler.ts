@@ -27,15 +27,6 @@ import {
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
 
-function isGptModel(model: string): boolean {
-  return (
-    model.startsWith("gpt-")
-    || model.startsWith("o1-")
-    || model.startsWith("o3-")
-    || model.startsWith("o4-")
-  )
-}
-
 interface ThinkingBlock {
   type: "thinking"
   [k: string]: unknown
@@ -165,17 +156,6 @@ async function readChatPayload(c: Context): Promise<ChatCompletionsPayload> {
   return payload
 }
 
-function normalizeTokenLimit(payload: ChatCompletionsPayload) {
-  const budget = payload.max_completion_tokens ?? payload.max_tokens
-  if (isGptModel(payload.model)) {
-    payload.max_completion_tokens = budget
-    delete payload.max_tokens
-  } else {
-    payload.max_tokens = budget
-    delete payload.max_completion_tokens
-  }
-}
-
 async function logTokenEstimate(
   payload: ChatCompletionsPayload,
   selectedModel: Model | undefined,
@@ -202,8 +182,6 @@ export async function handleCompletion(c: Context) {
   await logTokenEstimate(payload, selectedModel)
 
   if (state.manualApprove) await awaitApproval()
-
-  normalizeTokenLimit(payload)
 
   // AbortController governs the upstream fetch so we can cancel cleanly on
   // client disconnect; otherwise an orphaned upstream socket eventually shows
