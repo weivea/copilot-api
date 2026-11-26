@@ -5,16 +5,74 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator"
 import fs from "node:fs"
 import path from "node:path"
 
+import { startOfCurrentMonthMs } from "~/lib/usage-normalizer"
+
 import * as schema from "./schema"
 
 let db: BunSQLiteDatabase<typeof schema> | undefined
+
+export function backfillMonthlyTokenUsage(
+  sqlite: Database,
+  monthStart = startOfCurrentMonthMs(),
+): void {
+  sqlite
+    .prepare(
+      `
+      UPDATE auth_tokens
+      SET
+        monthly_window_start = max(
+          ?1,
+          coalesce(
+            (
+              SELECT max(reset_at)
+              FROM usage_resets
+              WHERE usage_resets.auth_token_id = auth_tokens.id
+                AND usage_resets.kind = 'monthly'
+            ),
+            0
+          )
+        ),
+        monthly_token_used = coalesce(
+          (
+            SELECT sum(coalesce(billable_tokens, total_tokens, 0))
+            FROM request_logs
+            WHERE request_logs.auth_token_id = auth_tokens.id
+              AND request_logs.endpoint != '/v1/messages/count_tokens'
+              AND request_logs.timestamp >= max(
+                ?1,
+                coalesce(
+                  (
+                    SELECT max(reset_at)
+                    FROM usage_resets
+                    WHERE usage_resets.auth_token_id = auth_tokens.id
+                      AND usage_resets.kind = 'monthly'
+                  ),
+                  0
+                )
+              )
+          ),
+          0
+        )
+      WHERE monthly_window_start = 0
+        AND (
+          EXISTS (SELECT 1 FROM request_logs WHERE request_logs.auth_token_id = auth_tokens.id)
+          OR EXISTS (
+            SELECT 1 FROM usage_resets
+            WHERE usage_resets.auth_token_id = auth_tokens.id
+              AND usage_resets.kind = 'monthly'
+          )
+        )
+      `,
+    )
+    .run(monthStart)
+}
 
 export function initDb(dbPath: string): BunSQLiteDatabase<typeof schema> {
   const dir = path.dirname(dbPath)
   fs.mkdirSync(dir, { recursive: true })
   const sqlite = new Database(dbPath)
-  sqlite.exec("PRAGMA journal_mode = WAL;")
-  sqlite.exec("PRAGMA foreign_keys = ON;")
+  sqlite.run("PRAGMA journal_mode = WAL;")
+  sqlite.run("PRAGMA foreign_keys = ON;")
   try {
     fs.chmodSync(dbPath, 0o600)
   } catch {
@@ -24,6 +82,7 @@ export function initDb(dbPath: string): BunSQLiteDatabase<typeof schema> {
 
   try {
     migrate(db, { migrationsFolder: resolveMigrationsFolder() })
+    backfillMonthlyTokenUsage(sqlite)
   } catch (err) {
     consola.fatal("Database migration failed; refusing to start.", err)
     throw err

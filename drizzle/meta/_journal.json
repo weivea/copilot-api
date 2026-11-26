@@ -15,6 +15,13 @@
       "when": 1779432372129,
       "tag": "0001_add_cost_nano_aiu",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795672332615,
+      "tag": "0002_token_usage_details",
+      "breakpoints": true
     }
   ]
 }

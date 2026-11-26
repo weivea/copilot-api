@@ -48,9 +48,65 @@ describe("initDb migration", () => {
     const rows = sqlite
       .query(`SELECT count(*) AS c FROM __drizzle_migrations`)
       .all() as Array<{ c: number }>
-    // Two migrations: 0000 + 0001.
-    expect(rows[0]?.c).toBe(2)
+    // Three migrations: 0000 + 0001 + 0002.
+    expect(rows[0]?.c).toBe(3)
     sqlite.close()
+  })
+
+  test("0002 migration adds usage detail columns and backfills billable_tokens + monthly_token_used", () => {
+    const p = tmpDbPath()
+    const sqlite = new Database(p)
+    // Apply only 0000 + 0001 via Drizzle migrator? Simpler: create an authentic 0001-era DB,
+    // or test initDb on fresh + pre-seeded pre-backfill rows.
+    sqlite.close()
+
+    initDb(p)
+    const verifyDb = new Database(p)
+    const logCols = verifyDb
+      .query(`PRAGMA table_info(request_logs)`)
+      .all() as Array<{ name: string }>
+    const colNames = logCols.map((c) => c.name)
+    expect(colNames).toContain("cached_tokens")
+    expect(colNames).toContain("cache_creation_tokens")
+    expect(colNames).toContain("reasoning_tokens")
+    expect(colNames).toContain("billable_tokens")
+    expect(colNames).toContain("usage_complete")
+
+    const tokenCols = verifyDb
+      .query(`PRAGMA table_info(auth_tokens)`)
+      .all() as Array<{ name: string }>
+    const tokenColNames = tokenCols.map((c) => c.name)
+    expect(tokenColNames).toContain("monthly_token_used")
+    expect(tokenColNames).toContain("monthly_window_start")
+
+    // Simulate a pre-0002 upgraded token whose monthly_window_start is still 0
+    const now = Date.now()
+    verifyDb.run(`
+      INSERT INTO auth_tokens (name, token_hash, token_prefix, created_at, monthly_token_used, monthly_window_start)
+      VALUES ('legacy', 'legacy-hash', 'cpk-leg', ${now}, 0, 0);
+    `)
+    const { id } = verifyDb
+      .query(`SELECT id FROM auth_tokens WHERE token_hash = 'legacy-hash'`)
+      .get() as { id: number }
+    verifyDb.run(`
+      INSERT INTO request_logs (auth_token_id, timestamp, endpoint, status_code, total_tokens, billable_tokens)
+      VALUES
+        (${id}, ${now}, '/v1/chat/completions', 200, 120, 120),
+        (${id}, ${now}, '/v1/messages/count_tokens', 200, 999, 0);
+    `)
+    verifyDb.close()
+
+    // Re-running initDb triggers idempotent backfillMonthlyTokenUsage
+    initDb(p)
+    const afterDb = new Database(p)
+    const tok = afterDb
+      .query(
+        `SELECT monthly_token_used, monthly_window_start FROM auth_tokens WHERE id = ?`,
+      )
+      .get(id) as { monthly_token_used: number; monthly_window_start: number }
+    expect(tok.monthly_token_used).toBe(120)
+    expect(tok.monthly_window_start).toBeGreaterThan(0)
+    afterDb.close()
   })
 
   test("inserts can carry cost_nano_aiu after migration", async () => {

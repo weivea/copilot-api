@@ -3,19 +3,22 @@ import { z } from "zod"
 
 import { getAuthTokenById, listAuthTokens } from "~/db/queries/auth-tokens"
 import {
-  aggregateUsagePerTokenSince,
+  aggregateBreakdownInRange,
+  aggregateUsagePerTokenInRange,
   aggregateUsageSince,
+  type Bucket,
   countRequestsSince,
+  emptyUsageBreakdown,
   recentLogs,
   sumTokensSince,
   timeseriesByBucket,
-  type Bucket,
+  type UsageBreakdown,
 } from "~/db/queries/request-logs"
-import {
-  latestUsageReset,
-  latestUsageResetsByKind,
-} from "~/db/queries/usage-resets"
 import { sessionMiddleware } from "~/lib/session"
+import {
+  getEffectiveMonthlyUsed,
+  startOfCurrentMonthMs,
+} from "~/lib/usage-normalizer"
 
 export const adminUsageRoutes = new Hono()
 
@@ -27,11 +30,30 @@ function startOfTodayMs(): number {
   return d.getTime()
 }
 
-function startOfMonthMs(): number {
-  const d = new Date()
-  d.setDate(1)
-  d.setHours(0, 0, 0, 0)
-  return d.getTime()
+function parseOptionalRange(c: Context): { from: number; to: number } | null {
+  const rawFrom = c.req.query("from")
+  const rawTo = c.req.query("to")
+  if (rawFrom === undefined || rawTo === undefined) return null
+  const from = Number(rawFrom)
+  const to = Number(rawTo)
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null
+  return { from, to }
+}
+
+function serializeBreakdown(b: UsageBreakdown) {
+  return {
+    requests: b.requests,
+    tokens: b.billableTokens,
+    prompt_tokens: b.promptTokens,
+    cached_tokens: b.cachedTokens,
+    cache_creation_tokens: b.cacheCreationTokens,
+    completion_tokens: b.completionTokens,
+    reasoning_tokens: b.reasoningTokens,
+    total_tokens: b.totalTokens,
+    billable_tokens: b.billableTokens,
+    cache_hit_rate: b.cacheHitRate,
+    incomplete_requests: b.incompleteRequests,
+  }
 }
 
 type ResolveResult =
@@ -88,28 +110,27 @@ function resolveTokenId(c: Context, raw: string | undefined): ResolveResult {
 adminUsageRoutes.get("/summary", async (c) => {
   const resolved = resolveTokenId(c, c.req.query("token_id"))
   if ("error" in resolved) return resolved.error
+  const todayStart = startOfTodayMs()
+  const monthStart = startOfCurrentMonthMs()
+  const range = parseOptionalRange(c)
+
   if (resolved.kind === "all") {
-    // Aggregate across all DB tokens — single SQL queries instead of N+1.
-    const todayStart = startOfTodayMs()
-    const monthStart = startOfMonthMs()
-    const [today, monthly, resets, rows] = await Promise.all([
+    const [today, rows, breakdown] = await Promise.all([
       aggregateUsageSince(todayStart),
-      aggregateUsagePerTokenSince(monthStart),
-      latestUsageResetsByKind("monthly"),
       listAuthTokens(),
+      range ?
+        aggregateBreakdownInRange({
+          from: range.from,
+          to: range.to,
+          tokenId: "all",
+        })
+      : Promise.resolve(null),
     ])
 
-    // Apply per-token monthly reset (anyone reset after start-of-month
-    // restarts their monthly counter; we conservatively re-query those).
-    let monthlyUsed = 0
-    for (const r of rows) {
-      const reset = resets.get(r.id) ?? 0
-      monthlyUsed +=
-        reset > monthStart ?
-          // Token was reset mid-month; recompute its slice precisely.
-          await sumTokensSince(r.id, reset)
-        : (monthly.get(r.id)?.tokens ?? 0)
-    }
+    const monthlyUsed = rows.reduce(
+      (sum, r) => sum + getEffectiveMonthlyUsed(r, monthStart),
+      0,
+    )
 
     return c.json({
       requests_today: today.requests,
@@ -118,6 +139,7 @@ adminUsageRoutes.get("/summary", async (c) => {
       monthly_limit: null,
       lifetime_used: rows.reduce((s, r) => s + r.lifetimeTokenUsed, 0),
       lifetime_limit: null,
+      range_breakdown: breakdown ? serializeBreakdown(breakdown) : null,
     })
   }
   const id = resolved.id
@@ -128,16 +150,25 @@ adminUsageRoutes.get("/summary", async (c) => {
       404,
     )
   }
-  const todayStart = startOfTodayMs()
-  const reset = await latestUsageReset(id, "monthly")
-  const since = Math.max(startOfMonthMs(), reset)
+  const [requestsToday, tokensToday, breakdown] = await Promise.all([
+    countRequestsSince(id, todayStart),
+    sumTokensSince(id, todayStart),
+    range ?
+      aggregateBreakdownInRange({
+        from: range.from,
+        to: range.to,
+        tokenId: id,
+      })
+    : Promise.resolve(null),
+  ])
   return c.json({
-    requests_today: await countRequestsSince(id, todayStart),
-    tokens_today: await sumTokensSince(id, todayStart),
-    monthly_used: await sumTokensSince(id, since),
+    requests_today: requestsToday,
+    tokens_today: tokensToday,
+    monthly_used: getEffectiveMonthlyUsed(tok, monthStart),
     monthly_limit: tok.monthlyTokenLimit,
     lifetime_used: tok.lifetimeTokenUsed,
     lifetime_limit: tok.lifetimeTokenLimit,
+    range_breakdown: breakdown ? serializeBreakdown(breakdown) : null,
   })
 })
 
@@ -178,21 +209,30 @@ adminUsageRoutes.get("/per-token", async (c) => {
       403,
     )
   }
-  const from = Number.parseInt(c.req.query("from") ?? "0", 10)
+  const rawFrom = Number.parseInt(c.req.query("from") ?? "0", 10)
+  const from = Number.isFinite(rawFrom) ? rawFrom : 0
+  const rawTo = c.req.query("to")
+  const parsedTo = rawTo === undefined ? undefined : Number.parseInt(rawTo, 10)
+  const to =
+    parsedTo !== undefined && Number.isFinite(parsedTo) ? parsedTo : undefined
+
+  const monthStart = startOfCurrentMonthMs()
   const [rows, agg] = await Promise.all([
     listAuthTokens(),
-    aggregateUsagePerTokenSince(from),
+    aggregateUsagePerTokenInRange({ from, to }),
   ])
   const out = rows.map((r) => {
-    const a = agg.get(r.id) ?? { requests: 0, tokens: 0 }
+    const a = agg.get(r.id) ?? emptyUsageBreakdown()
+    const monthlyUsed = getEffectiveMonthlyUsed(r, monthStart)
     return {
       id: r.id,
       name: r.name,
-      requests: a.requests,
-      tokens: a.tokens,
+      ...serializeBreakdown(a),
+      monthly_used: monthlyUsed,
+      monthly_limit: r.monthlyTokenLimit,
       monthly_pct:
         r.monthlyTokenLimit && r.monthlyTokenLimit > 0 ?
-          Math.min(100, Math.round((a.tokens / r.monthlyTokenLimit) * 100))
+          Math.min(100, Math.round((monthlyUsed / r.monthlyTokenLimit) * 100))
         : null,
       last_used_at: r.lastUsedAt,
     }

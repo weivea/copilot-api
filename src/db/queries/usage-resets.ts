@@ -1,7 +1,7 @@
-import { and, desc, eq, sql } from "drizzle-orm"
+import { and, desc, eq } from "drizzle-orm"
 
 import { getDb } from "../client"
-import { usageResets } from "../schema"
+import { authTokens, usageResets } from "../schema"
 
 export type ResetKind = "monthly" | "lifetime"
 
@@ -12,6 +12,32 @@ export async function appendUsageReset(
 ): Promise<void> {
   const db = getDb()
   await db.insert(usageResets).values({ authTokenId, kind, resetAt })
+}
+
+export function resetMonthlyQuota(authTokenId: number, resetAt: number): void {
+  const db = getDb()
+  db.transaction((tx) => {
+    tx.update(authTokens)
+      .set({ monthlyTokenUsed: 0, monthlyWindowStart: resetAt })
+      .where(eq(authTokens.id, authTokenId))
+      .run()
+    tx.insert(usageResets)
+      .values({ authTokenId, kind: "monthly", resetAt })
+      .run()
+  })
+}
+
+export function resetLifetimeQuota(authTokenId: number, resetAt: number): void {
+  const db = getDb()
+  db.transaction((tx) => {
+    tx.update(authTokens)
+      .set({ lifetimeTokenUsed: 0 })
+      .where(eq(authTokens.id, authTokenId))
+      .run()
+    tx.insert(usageResets)
+      .values({ authTokenId, kind: "lifetime", resetAt })
+      .run()
+  })
 }
 
 export async function latestUsageReset(
@@ -28,28 +54,4 @@ export async function latestUsageReset(
     .orderBy(desc(usageResets.resetAt))
     .limit(1)
   return rows[0]?.ts ?? 0
-}
-
-/**
- * Batch fetch latest reset timestamp per auth token in a single SQL query.
- * Used by the admin summary endpoint to avoid N+1 lookups.
- */
-export async function latestUsageResetsByKind(
-  kind: ResetKind,
-): Promise<Map<number, number>> {
-  const db = getDb()
-  const rows = await db
-    .select({
-      id: usageResets.authTokenId,
-      ts: sql<number>`max(${usageResets.resetAt})`,
-    })
-    .from(usageResets)
-    .where(eq(usageResets.kind, kind))
-    .groupBy(usageResets.authTokenId)
-  const out = new Map<number, number>()
-  for (const r of rows) {
-    if (r.id == null) continue
-    out.set(r.id, r.ts ?? 0)
-  }
-  return out
 }

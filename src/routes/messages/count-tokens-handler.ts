@@ -107,6 +107,8 @@ export async function handleCountTokens(c: Context) {
     model: payload.model,
     promptTokens: result.input_tokens,
     totalTokens: result.input_tokens,
+    billableTokens: 0,
+    usageComplete: true,
     billable: false,
   })
   return c.json(result)

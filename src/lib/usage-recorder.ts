@@ -2,14 +2,25 @@ import type { Context, MiddlewareHandler } from "hono"
 
 import consola from "consola"
 
-import { incrementLifetimeUsed, touchLastUsed } from "~/db/queries/auth-tokens"
-import { insertRequestLog, maybePruneOldLogs } from "~/db/queries/request-logs"
+import {
+  maybePruneOldLogs,
+  recordRequestAndQuota,
+} from "~/db/queries/request-logs"
 import { state } from "~/lib/state"
+import {
+  computeBillableTokens,
+  type NormalizedUsage,
+} from "~/lib/usage-normalizer"
 
 interface PendingUsage {
   promptTokens?: number | null
+  cachedTokens?: number | null
+  cacheCreationTokens?: number | null
   completionTokens?: number | null
+  reasoningTokens?: number | null
   totalTokens?: number | null
+  billableTokens?: number | null
+  usageComplete?: boolean
   costNanoAiu?: number | null
   model?: string | null
   recorded?: boolean
@@ -77,27 +88,33 @@ interface WriteLogArgs {
 async function writeLogInner(args: WriteLogArgs): Promise<void> {
   const { tokenId, startedAt, status, endpoint, pending } = args
   const ts = Date.now()
+  const billable = pending.billable !== false
+  const totalTokens = pending.totalTokens ?? null
+  const billableTokens = computeBillableTokens(
+    pending.billableTokens === undefined ? totalTokens : pending.billableTokens,
+    billable,
+  )
+  const usageComplete =
+    pending.usageComplete ?? (totalTokens !== null && status < 400)
   try {
-    await insertRequestLog({
+    recordRequestAndQuota({
       authTokenId: tokenId,
       timestamp: ts,
       endpoint,
       model: pending.model ?? null,
       promptTokens: pending.promptTokens ?? null,
+      cachedTokens: pending.cachedTokens ?? null,
+      cacheCreationTokens: pending.cacheCreationTokens ?? null,
       completionTokens: pending.completionTokens ?? null,
-      totalTokens: pending.totalTokens ?? null,
+      reasoningTokens: pending.reasoningTokens ?? null,
+      totalTokens,
+      billableTokens,
+      usageComplete,
       costNanoAiu: pending.costNanoAiu ?? null,
       statusCode: status,
       latencyMs: ts - startedAt,
+      billable,
     })
-    if (
-      pending.billable !== false
-      && pending.totalTokens
-      && pending.totalTokens > 0
-    ) {
-      await incrementLifetimeUsed(tokenId, pending.totalTokens)
-    }
-    await touchLastUsed(tokenId, ts)
     await maybePruneOldLogs(state.logRetentionDays * 86_400_000)
   } catch (err) {
     consola.warn("usageRecorder: failed to write log", err)
@@ -128,58 +145,74 @@ export function flushUsage(c: Context, status = 200): void {
   writeLog({ tokenId, startedAt, status, endpoint: c.req.path, pending })
 }
 
-export function getTotalTokens(
-  usage:
-    | {
-        input_tokens?: number
-        output_tokens?: number
-        total_tokens?: number
-      }
-    | null
-    | undefined,
-): number | null {
-  if (typeof usage?.total_tokens === "number") return usage.total_tokens
-  if (
-    typeof usage?.input_tokens === "number"
-    && typeof usage.output_tokens === "number"
-  )
-    return usage.input_tokens + usage.output_tokens
-  return null
+export type RecordUsageInput = Pick<
+  PendingUsage,
+  | "promptTokens"
+  | "cachedTokens"
+  | "cacheCreationTokens"
+  | "completionTokens"
+  | "reasoningTokens"
+  | "totalTokens"
+  | "billableTokens"
+  | "usageComplete"
+  | "costNanoAiu"
+  | "model"
+  | "billable"
+>
+
+export function recordUsage(c: Context, data: RecordUsageInput): void {
+  const p = getPending(c)
+  for (const key of [
+    "promptTokens",
+    "cachedTokens",
+    "cacheCreationTokens",
+    "completionTokens",
+    "reasoningTokens",
+    "totalTokens",
+    "billableTokens",
+    "usageComplete",
+    "costNanoAiu",
+    "model",
+    "billable",
+  ] as const) {
+    if (data[key] !== undefined) {
+      ;(p as Record<string, unknown>)[key] = data[key]
+    }
+  }
 }
 
-export function recordUsage(
+export function recordNormalizedUsage(
   c: Context,
-  data: Pick<
-    PendingUsage,
-    | "promptTokens"
-    | "completionTokens"
-    | "totalTokens"
-    | "costNanoAiu"
-    | "model"
-    | "billable"
-  >,
+  opts: {
+    model?: string | null
+    usage: NormalizedUsage
+    costNanoAiu?: number | null
+    billable?: boolean
+  },
 ): void {
-  const p = getPending(c)
-  if (data.promptTokens !== undefined) p.promptTokens = data.promptTokens
-  if (data.completionTokens !== undefined)
-    p.completionTokens = data.completionTokens
-  if (data.totalTokens !== undefined) p.totalTokens = data.totalTokens
-  if (data.costNanoAiu !== undefined) p.costNanoAiu = data.costNanoAiu
-  if (data.model !== undefined) p.model = data.model
-  if (data.billable !== undefined) p.billable = data.billable
+  recordUsage(c, {
+    model: opts.model,
+    promptTokens: opts.usage.promptTokens,
+    cachedTokens: opts.usage.cachedTokens,
+    cacheCreationTokens: opts.usage.cacheCreationTokens,
+    completionTokens: opts.usage.completionTokens,
+    reasoningTokens: opts.usage.reasoningTokens,
+    totalTokens: opts.usage.totalTokens,
+    billableTokens: opts.usage.billableTokens,
+    usageComplete: opts.usage.usageComplete,
+    costNanoAiu: opts.costNanoAiu,
+    billable: opts.billable,
+  })
 }
 
 export function usageRecorder(): MiddlewareHandler {
   return async (c, next) => {
     const startedAt = Date.now()
     c.set(STARTED, startedAt)
-    let status = 200
+    let status = 500
     try {
       await next()
       status = c.res.status
-    } catch (err) {
-      status = 500
-      throw err
     } finally {
       const tokenId = c.get("authTokenId")
       const deferred = c.get(DEFER) === true

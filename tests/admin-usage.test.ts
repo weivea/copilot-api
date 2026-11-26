@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
 import { createAuthToken } from "../src/db/queries/auth-tokens"
-import { insertRequestLog } from "../src/db/queries/request-logs"
+import {
+  insertRequestLog,
+  recordRequestAndQuota,
+} from "../src/db/queries/request-logs"
 import { createSession } from "../src/db/queries/sessions"
 import { state } from "../src/lib/state"
 import { adminUsageRoutes } from "../src/routes/admin/usage"
@@ -47,12 +50,13 @@ describe("admin usage API", () => {
       tokenPrefix: "p",
       monthlyTokenLimit: 1000,
     })
-    await insertRequestLog({
+    recordRequestAndQuota({
       authTokenId: id,
       timestamp: Date.now(),
       endpoint: "/x",
       statusCode: 200,
       totalTokens: 50,
+      billableTokens: 50,
     })
     const cookie = await asUser(id)
     const res = await makeApp().request(

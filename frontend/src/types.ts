@@ -14,6 +14,7 @@ export interface TokenRow {
   is_disabled: boolean
   rpm_limit: number | null
   monthly_token_limit: number | null
+  monthly_token_used?: number
   lifetime_token_limit: number | null
   lifetime_token_used: number
   created_at: number
@@ -25,6 +26,20 @@ export interface CreatedToken extends TokenRow {
   token: string
 }
 
+export interface UsageBreakdown {
+  requests: number
+  tokens: number
+  prompt_tokens: number
+  cached_tokens: number | null
+  cache_creation_tokens: number | null
+  completion_tokens: number
+  reasoning_tokens: number | null
+  total_tokens: number
+  billable_tokens: number
+  cache_hit_rate: number | null
+  incomplete_requests: number
+}
+
 export interface UsageSummary {
   requests_today: number
   tokens_today: number
@@ -32,6 +47,7 @@ export interface UsageSummary {
   monthly_limit: number | null
   lifetime_used: number
   lifetime_limit: number | null
+  range_breakdown?: UsageBreakdown | null
 }
 
 export interface TimeseriesPoint {
@@ -41,11 +57,11 @@ export interface TimeseriesPoint {
   authTokenId: number | null
 }
 
-export interface PerTokenRow {
+export interface PerTokenRow extends UsageBreakdown {
   id: number
   name: string
-  requests: number
-  tokens: number
+  monthly_used: number
+  monthly_limit: number | null
   monthly_pct: number | null
   last_used_at: number | null
 }
@@ -57,8 +73,13 @@ export interface RecentLog {
   endpoint: string
   model: string | null
   promptTokens: number | null
+  cachedTokens: number | null
+  cacheCreationTokens: number | null
   completionTokens: number | null
+  reasoningTokens: number | null
   totalTokens: number | null
+  billableTokens: number | null
+  usageComplete: number
   statusCode: number
   latencyMs: number | null
 }

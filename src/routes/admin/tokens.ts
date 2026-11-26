@@ -4,19 +4,23 @@ import { Hono } from "hono"
 import { z } from "zod"
 
 import {
+  type AuthTokenRow,
   createAuthToken,
   deleteAuthToken,
   getAuthTokenById,
   listAuthTokens,
   rotateAuthTokenSecret,
-  setLifetimeUsed,
   updateAuthToken,
 } from "~/db/queries/auth-tokens"
 import { deleteSessionsForToken } from "~/db/queries/sessions"
-import { appendUsageReset } from "~/db/queries/usage-resets"
+import {
+  resetLifetimeQuota,
+  resetMonthlyQuota,
+} from "~/db/queries/usage-resets"
 import { generateToken, hashToken, prefixOf } from "~/lib/auth-token-utils"
 import { sessionMiddleware } from "~/lib/session"
 import { state } from "~/lib/state"
+import { getEffectiveMonthlyUsed } from "~/lib/usage-normalizer"
 
 export const adminTokensRoutes = new Hono()
 
@@ -47,19 +51,7 @@ function superAdminProtected(c: Context) {
 // All token endpoints require admin or super
 adminTokensRoutes.use("*", sessionMiddleware({ requireRole: "admin" }))
 
-function publicRow(row: {
-  id: number
-  name: string
-  tokenPrefix: string
-  isAdmin: number
-  isDisabled: number
-  rpmLimit: number | null
-  monthlyTokenLimit: number | null
-  lifetimeTokenLimit: number | null
-  lifetimeTokenUsed: number
-  createdAt: number
-  lastUsedAt: number | null
-}) {
+function publicRow(row: AuthTokenRow) {
   return {
     id: row.id,
     name: row.name,
@@ -68,6 +60,7 @@ function publicRow(row: {
     is_disabled: row.isDisabled === 1,
     rpm_limit: row.rpmLimit,
     monthly_token_limit: row.monthlyTokenLimit,
+    monthly_token_used: getEffectiveMonthlyUsed(row),
     lifetime_token_limit: row.lifetimeTokenLimit,
     lifetime_token_used: row.lifetimeTokenUsed,
     created_at: row.createdAt,
@@ -78,7 +71,7 @@ function publicRow(row: {
 
 adminTokensRoutes.get("/", async (c) => {
   const rows = await listAuthTokens()
-  return c.json(rows.map(publicRow))
+  return c.json(rows.map((row) => publicRow(row)))
 })
 
 const CreateSchema = z.object({
@@ -202,7 +195,10 @@ adminTokensRoutes.patch("/:id", async (c) => {
     await deleteSessionsForToken(id)
   }
   const updated = await getAuthTokenById(id)
-  return c.json(publicRow(updated!))
+  if (!updated) {
+    return c.json({ error: { type: "not_found", message: "Not found" } }, 404)
+  }
+  return c.json(publicRow(updated))
 })
 
 adminTokensRoutes.delete("/:id", async (c) => {
@@ -246,7 +242,7 @@ adminTokensRoutes.post("/:id/reset-monthly", async (c) => {
       403,
     )
   }
-  await appendUsageReset(id, "monthly", Date.now())
+  resetMonthlyQuota(id, Date.now())
   return c.json({ ok: true })
 })
 
@@ -262,8 +258,7 @@ adminTokensRoutes.post("/:id/reset-lifetime", async (c) => {
   const r = await loadTargetOr404(c, id)
   if (!r.ok) return r.resp
   if (isSuperAdminRow(r.row)) return superAdminProtected(c)
-  await setLifetimeUsed(id, 0)
-  await appendUsageReset(id, "lifetime", Date.now())
+  resetLifetimeQuota(id, Date.now())
   return c.json({ ok: true })
 })
 

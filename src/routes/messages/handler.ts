@@ -10,7 +10,17 @@ import {
 } from "~/lib/copilot-info-messages"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
+import {
+  normalizeAnthropicUsage,
+  normalizeChatUsage,
+  type AnthropicUsageLike,
+  type ChatUsageLike,
+} from "~/lib/usage-normalizer"
+import {
+  deferUsage,
+  flushUsage,
+  recordNormalizedUsage,
+} from "~/lib/usage-recorder"
 import { cacheModels, formatErrorWithCause } from "~/lib/utils"
 import {
   createChatCompletions,
@@ -99,11 +109,11 @@ export async function handleCompletion(c: Context) {
       endpoint: "/v1/messages",
       model: openAIPayload.model,
     })
-    recordUsage(c, {
+    recordNormalizedUsage(c, {
       model: openAIPayload.model,
-      promptTokens: response.usage?.prompt_tokens ?? null,
-      completionTokens: response.usage?.completion_tokens ?? null,
-      totalTokens: response.usage?.total_tokens ?? null,
+      usage: normalizeChatUsage(response.usage, {
+        usageComplete: response.usage !== undefined,
+      }),
       costNanoAiu: pickCostNanoAiu(response),
     })
     return c.json(anthropicResponse)
@@ -124,6 +134,7 @@ export async function handleCompletion(c: Context) {
       runAnthropicStream(stream, {
         response,
         usage,
+        rawUsage: undefined,
         c,
         model: openAIPayload.model,
         upstreamController,
@@ -138,17 +149,6 @@ function isNativeAgentCall(payload: NativeMessagesPayload): boolean {
       message.role === "assistant"
       || (Array.isArray(message.content)
         && message.content.some((block) => block.type === "tool_result")),
-  )
-}
-
-function totalNativeInputTokens(
-  usage: Partial<AnthropicResponse["usage"]> | undefined,
-): number {
-  if (!usage) return 0
-  return (
-    (usage.input_tokens ?? 0)
-    + (usage.cache_creation_input_tokens ?? 0)
-    + (usage.cache_read_input_tokens ?? 0)
   )
 }
 
@@ -181,12 +181,11 @@ async function handleNativeCompletion(
       endpoint: "/v1/messages",
       model: response.model,
     })
-    const promptTokens = totalNativeInputTokens(response.usage)
-    recordUsage(c, {
+    recordNormalizedUsage(c, {
       model: response.model,
-      promptTokens,
-      completionTokens: response.usage.output_tokens,
-      totalTokens: promptTokens + response.usage.output_tokens,
+      usage: normalizeAnthropicUsage(response.usage, {
+        usageComplete: true,
+      }),
       costNanoAiu: pickCostNanoAiu(response),
     })
     return c.json(response)
@@ -207,39 +206,41 @@ async function handleNativeCompletion(
 }
 
 interface NativeStreamUsage {
-  input: number
-  output: number
-  cacheCreation: number
-  cacheRead: number
+  input: number | null
+  startOutput: number | null
+  deltaOutput: number | null
+  cacheCreation: number | null
+  cacheRead: number | null
+  cacheCreationDetail: AnthropicUsageLike["cache_creation"]
+  sawMessageStop: boolean
+  sawErrorEvent: boolean
 }
 
 interface NativeMessageStreamPayload {
   type?: string
   message?: Partial<AnthropicResponse>
-  usage?: Partial<AnthropicResponse["usage"]>
+  usage?: AnthropicUsageLike
   copilot_usage?: AnthropicResponse["copilot_usage"]
   copilot_info_messages?: AnthropicResponse["copilot_info_messages"]
 }
 
-function captureNativeUsage(
-  source: Partial<AnthropicResponse["usage"]> | undefined,
+function captureNativeUsageFields(
+  source: AnthropicUsageLike | undefined,
   target: NativeStreamUsage,
+  isDelta: boolean,
 ): void {
   if (!source) return
-  if (source.input_tokens !== undefined)
-    target.input = Math.max(target.input, source.input_tokens)
-  if (source.output_tokens !== undefined)
-    target.output = Math.max(target.output, source.output_tokens)
-  if (source.cache_creation_input_tokens !== undefined)
-    target.cacheCreation = Math.max(
-      target.cacheCreation,
-      source.cache_creation_input_tokens,
-    )
-  if (source.cache_read_input_tokens !== undefined)
-    target.cacheRead = Math.max(
-      target.cacheRead,
-      source.cache_read_input_tokens,
-    )
+  if (typeof source.input_tokens === "number")
+    target.input = source.input_tokens
+  if (typeof source.output_tokens === "number") {
+    if (isDelta) target.deltaOutput = source.output_tokens
+    else target.startOutput = source.output_tokens
+  }
+  if (typeof source.cache_creation_input_tokens === "number")
+    target.cacheCreation = source.cache_creation_input_tokens
+  if (typeof source.cache_read_input_tokens === "number")
+    target.cacheRead = source.cache_read_input_tokens
+  if (source.cache_creation) target.cacheCreationDetail = source.cache_creation
 }
 
 interface NativeStreamContext {
@@ -271,8 +272,8 @@ function captureNativeEvent(
   const parsed = value as NativeMessageStreamPayload
 
   if (parsed.message?.model) meta.model = parsed.message.model
-  captureNativeUsage(parsed.message?.usage, usage)
-  captureNativeUsage(parsed.usage, usage)
+  captureNativeUsageFields(parsed.message?.usage, usage, false)
+  captureNativeUsageFields(parsed.usage, usage, true)
   captureInfoMessages(parsed, {
     endpoint: "/v1/messages",
     model: meta.model,
@@ -288,33 +289,92 @@ function captureNativeEvent(
   return parsed.type
 }
 
+function finalizeNativeUsage(usage: NativeStreamUsage, status: number) {
+  const streamClean =
+    usage.sawMessageStop && !usage.sawErrorEvent && status === 200
+  const finalOutput =
+    usage.deltaOutput ?? (streamClean ? usage.startOutput : null)
+  const hasAny =
+    usage.input !== null
+    || finalOutput !== null
+    || usage.cacheRead !== null
+    || usage.cacheCreation !== null
+    || Boolean(usage.cacheCreationDetail)
+  return normalizeAnthropicUsage(
+    hasAny ?
+      {
+        input_tokens: usage.input,
+        output_tokens: finalOutput,
+        cache_read_input_tokens: usage.cacheRead,
+        cache_creation_input_tokens: usage.cacheCreation,
+        cache_creation: usage.cacheCreationDetail,
+      }
+    : undefined,
+    { usageComplete: streamClean && finalOutput !== null },
+  )
+}
+
+interface NativeLoopState {
+  usage: NativeStreamUsage
+  meta: NativeStreamMeta
+  abortState: { aborted: boolean }
+  terminal: boolean
+}
+
+async function forwardNativeEvents(
+  stream: SSEStreamingApi,
+  response: AsyncIterable<NativeMessagesStreamEvent>,
+  loop: NativeLoopState,
+): Promise<void> {
+  for await (const rawEvent of response) {
+    if (loop.abortState.aborted) break
+    const type = captureNativeEvent(rawEvent.data, loop.usage, loop.meta)
+    const eventName = rawEvent.event ?? type
+    if (eventName === "message_stop") loop.usage.sawMessageStop = true
+    if (eventName === "error") loop.usage.sawErrorEvent = true
+    if (isNativeTerminalEvent(eventName)) loop.terminal = true
+    if (rawEvent.data !== undefined) {
+      await stream.writeSSE({
+        data: rawEvent.data,
+        event: rawEvent.event,
+        id: rawEvent.id === undefined ? undefined : String(rawEvent.id),
+        retry: rawEvent.retry,
+      })
+    }
+  }
+}
+
 async function pipeNativeAnthropicStream(
   stream: SSEStreamingApi,
   ctx: NativeStreamContext,
 ): Promise<void> {
   const { response, c, requestedModel, upstreamController } = ctx
-  const usage: NativeStreamUsage = {
-    input: 0,
-    output: 0,
-    cacheCreation: 0,
-    cacheRead: 0,
+  const loop: NativeLoopState = {
+    usage: {
+      input: null,
+      startOutput: null,
+      deltaOutput: null,
+      cacheCreation: null,
+      cacheRead: null,
+      cacheCreationDetail: undefined,
+      sawMessageStop: false,
+      sawErrorEvent: false,
+    },
+    meta: { model: requestedModel, costNanoAiu: null },
+    abortState: { aborted: false },
+    terminal: false,
   }
-  const meta: NativeStreamMeta = {
-    model: requestedModel,
-    costNanoAiu: null,
-  }
-  const abortState = { aborted: false }
-  let terminal = false
-  const active = () =>
-    !abortState.aborted && !c.req.raw.signal.aborted && !stream.closed
+  const isAborted = () => loop.abortState.aborted || c.req.raw.signal.aborted
+  let status = 200
+  const active = () => !isAborted() && !stream.closed
 
   stream.onAbort(() => {
-    abortState.aborted = true
+    loop.abortState.aborted = true
     upstreamController.abort()
   })
 
   const pingInterval = setInterval(() => {
-    if (abortState.aborted || stream.closed) return
+    if (loop.abortState.aborted || stream.closed) return
     stream
       .writeSSE({ event: "ping", data: JSON.stringify({ type: "ping" }) })
       .catch(() => {
@@ -323,27 +383,17 @@ async function pipeNativeAnthropicStream(
   }, 10_000)
 
   try {
-    for await (const rawEvent of response) {
-      if (abortState.aborted) break
-      const type = captureNativeEvent(rawEvent.data, usage, meta)
-      if (isNativeTerminalEvent(rawEvent.event ?? type)) terminal = true
-      if (rawEvent.data !== undefined) {
-        await stream.writeSSE({
-          data: rawEvent.data,
-          event: rawEvent.event,
-          id: rawEvent.id === undefined ? undefined : String(rawEvent.id),
-          retry: rawEvent.retry,
-        })
-      }
-    }
-    if (!terminal && active())
+    await forwardNativeEvents(stream, response, loop)
+    if (loop.usage.sawErrorEvent) status = 502
+    if (!loop.terminal && active())
       throw new Error("Upstream Messages stream ended before message_stop")
   } catch (error) {
+    status = isAborted() ? 499 : 502
     consola.error(
       "Upstream native messages stream failed:",
       formatErrorWithCause(error),
     )
-    if (active() && !terminal) {
+    if (active() && !loop.terminal) {
       const message = error instanceof Error ? error.message : String(error)
       await stream.writeSSE({
         event: "error",
@@ -354,18 +404,15 @@ async function pipeNativeAnthropicStream(
       })
     }
   } finally {
+    if (!loop.usage.sawMessageStop && isAborted()) status = 499
     clearInterval(pingInterval)
     upstreamController.abort()
-    const promptTokens = usage.input + usage.cacheCreation + usage.cacheRead
-    const totalTokens = promptTokens + usage.output
-    recordUsage(c, {
-      model: meta.model,
-      promptTokens: promptTokens || null,
-      completionTokens: usage.output || null,
-      totalTokens: totalTokens || null,
-      costNanoAiu: meta.costNanoAiu,
+    recordNormalizedUsage(c, {
+      model: loop.meta.model,
+      usage: finalizeNativeUsage(loop.usage, status),
+      costNanoAiu: loop.meta.costNanoAiu,
     })
-    flushUsage(c)
+    flushUsage(c, status)
   }
 }
 
@@ -378,6 +425,7 @@ interface RunAnthropicStreamCtx {
     cached: number
     cacheCreation: number
   }
+  rawUsage: ChatUsageLike | undefined
   c: Context
   model: string
   upstreamController: AbortController
@@ -390,16 +438,25 @@ interface StreamMeta {
 
 function captureStreamUsage(
   chunk: ChatCompletionChunk,
-  usage: RunAnthropicStreamCtx["usage"],
+  ctx: RunAnthropicStreamCtx,
 ) {
   if (!chunk.usage) return
   const u = chunk.usage
-  usage.prompt = u.prompt_tokens ?? usage.prompt
-  usage.completion = u.completion_tokens ?? usage.completion
-  usage.total = u.total_tokens ?? usage.total
-  usage.cached = u.prompt_tokens_details?.cached_tokens ?? usage.cached
-  usage.cacheCreation =
-    u.prompt_tokens_details?.cache_creation_input_tokens ?? usage.cacheCreation
+  ctx.usage.prompt = u.prompt_tokens ?? ctx.usage.prompt
+  ctx.usage.completion = u.completion_tokens ?? ctx.usage.completion
+  ctx.usage.total = u.total_tokens ?? ctx.usage.total
+  ctx.usage.cached = u.prompt_tokens_details?.cached_tokens ?? ctx.usage.cached
+  ctx.usage.cacheCreation =
+    u.prompt_tokens_details?.cache_creation_input_tokens
+    ?? ctx.usage.cacheCreation
+  ctx.rawUsage = {
+    ...ctx.rawUsage,
+    ...u,
+    prompt_tokens_details:
+      u.prompt_tokens_details ?? ctx.rawUsage?.prompt_tokens_details,
+    completion_tokens_details:
+      u.completion_tokens_details ?? ctx.rawUsage?.completion_tokens_details,
+  }
 }
 
 async function finalizeAnthropicStream(
@@ -482,11 +539,43 @@ function assertChatStreamCompleted(
     throw new Error("Upstream chat stream ended before completion")
 }
 
+interface TranslatedLoopArgs {
+  ctx: RunAnthropicStreamCtx
+  meta: StreamMeta
+  abortState: { aborted: boolean }
+}
+
+async function consumeTranslatedChatStream(
+  stream: SSEStreamingApi,
+  args: TranslatedLoopArgs,
+): Promise<boolean> {
+  const { ctx, meta, abortState } = args
+  for await (const rawEvent of ctx.response) {
+    if (abortState.aborted) break
+    consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+    if (rawEvent.data === "[DONE]") return true
+    if (!rawEvent.data) continue
+
+    const chunk = readChatStreamChunk(rawEvent.data)
+    captureStreamUsage(chunk, ctx)
+    captureChunkMetadata(chunk, meta, ctx.model)
+    const events = translateChunkToAnthropicEvents(chunk, meta.state)
+    for (const event of events) {
+      consola.debug("Translated Anthropic event:", JSON.stringify(event))
+      await stream.writeSSE({
+        event: event.type,
+        data: JSON.stringify(event),
+      })
+    }
+  }
+  return false
+}
+
 async function runAnthropicStream(
   stream: SSEStreamingApi,
   ctx: RunAnthropicStreamCtx,
 ): Promise<void> {
-  const { response, usage, c, model, upstreamController } = ctx
+  const { usage, c, model, upstreamController } = ctx
   const streamState: AnthropicStreamState = {
     messageStartSent: false,
     contentBlockIndex: 0,
@@ -494,28 +583,19 @@ async function runAnthropicStream(
     toolCalls: {},
   }
   const meta: StreamMeta = { state: streamState, cost: null }
-
   const abortState = { aborted: false }
-  const active = () =>
-    !abortState.aborted && !c.req.raw.signal.aborted && !stream.closed
-  // Idempotency guard: both the catch path and Hono's onError can call the
-  // finalizer. Only the first one is allowed to write end-of-stream events.
+  const isAborted = () => abortState.aborted || c.req.raw.signal.aborted
+  const active = () => !isAborted() && !stream.closed
   const finalizerState = { ran: false }
   let done = false
+  let status = 200
+
   stream.onAbort(() => {
     abortState.aborted = true
     consola.debug("Client aborted Anthropic stream")
-    // Cancel upstream immediately so we don't keep an orphan socket open.
     upstreamController.abort()
   })
 
-  // Periodic SSE ping to keep intermediaries (and the Anthropic SDK's own
-  // streaming idle timer) from closing the socket while upstream is slow
-  // to produce the first / next token. Send one immediately so the client
-  // observes bytes within its idle window even when upstream "thinking"
-  // delays the first real chunk by 10+ seconds; then refresh every 10s,
-  // which stays comfortably under the shortest idle timeout we've observed
-  // in the wild (~16s on the Anthropic SDK side).
   const sendPing = () => {
     if (abortState.aborted || stream.closed) return
     stream
@@ -527,40 +607,14 @@ async function runAnthropicStream(
         /* ignore: stream may be closing */
       })
   }
-  // Fire-and-forget: writeSSE returns a promise, but we don't need to
-  // await it before entering the read loop — the next iteration will
-  // serialize naturally on the same stream.
   sendPing()
   const pingInterval = setInterval(sendPing, 10_000)
 
   try {
-    for await (const rawEvent of response) {
-      if (abortState.aborted) break
-      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
-      if (rawEvent.data === "[DONE]") {
-        done = true
-        break
-      }
-
-      if (!rawEvent.data) {
-        continue
-      }
-
-      const chunk = readChatStreamChunk(rawEvent.data)
-      captureStreamUsage(chunk, usage)
-      captureChunkMetadata(chunk, meta, model)
-      const events = translateChunkToAnthropicEvents(chunk, streamState)
-
-      for (const event of events) {
-        consola.debug("Translated Anthropic event:", JSON.stringify(event))
-        await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event),
-        })
-      }
-    }
+    done = await consumeTranslatedChatStream(stream, { ctx, meta, abortState })
     if (active()) assertChatStreamCompleted(done, streamState)
   } catch (error) {
+    status = isAborted() ? 499 : 502
     consola.error(
       "Upstream stream error, closing gracefully:",
       formatErrorWithCause(error),
@@ -573,9 +627,8 @@ async function runAnthropicStream(
       })
     }
   } finally {
+    if (!done && isAborted()) status = 499
     clearInterval(pingInterval)
-    // Make sure the upstream socket is released even on the happy path —
-    // calling abort() after the body is fully consumed is a no-op.
     upstreamController.abort()
 
     try {
@@ -583,14 +636,17 @@ async function runAnthropicStream(
         await finalizeAnthropicStream(stream, streamState, usage)
       }
     } finally {
-      recordUsage(c, {
+      const usageComplete =
+        done
+        && status === 200
+        && !finalizerState.ran
+        && ctx.rawUsage !== undefined
+      recordNormalizedUsage(c, {
         model,
-        promptTokens: usage.prompt || null,
-        completionTokens: usage.completion || null,
-        totalTokens: usage.total || null,
+        usage: normalizeChatUsage(ctx.rawUsage, { usageComplete }),
         costNanoAiu: meta.cost,
       })
-      flushUsage(c)
+      flushUsage(c, status)
     }
   }
 }

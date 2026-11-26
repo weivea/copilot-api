@@ -15,10 +15,11 @@ import {
   invalidRequest,
   readJson,
 } from "~/lib/openai-request"
+import { normalizeSimpleUsage } from "~/lib/usage-normalizer"
 import {
   deferUsage,
   flushUsage,
-  getTotalTokens,
+  recordNormalizedUsage,
   recordUsage,
 } from "~/lib/usage-recorder"
 import {
@@ -97,19 +98,29 @@ async function readImageRequest(c: Context, operation: ImageOperation) {
 function captureUsage(
   c: Context,
   response: ImagesResponse,
-  context: ImageContext,
+  context: ImageContext & { usageComplete?: boolean },
 ) {
+  const { usageComplete } = context
   captureInfoMessages(response, {
     endpoint: `/v1/images/${context.operation}`,
     model: response.model ?? context.model,
   })
-  const usage = response.usage
-  recordUsage(c, {
+  if (!response.usage && usageComplete === undefined) {
+    const cost = pickCostNanoAiu(response)
+    recordUsage(c, {
+      model: response.model ?? context.model,
+      ...(cost !== null && { costNanoAiu: cost }),
+    })
+    return
+  }
+  const normalized = normalizeSimpleUsage(response.usage, {
+    usageComplete: usageComplete ?? response.usage !== undefined,
+  })
+  const cost = pickCostNanoAiu(response)
+  recordNormalizedUsage(c, {
     model: response.model ?? context.model,
-    promptTokens: usage?.input_tokens,
-    completionTokens: usage?.output_tokens,
-    totalTokens: getTotalTokens(usage) ?? undefined,
-    costNanoAiu: pickCostNanoAiu(response) ?? undefined,
+    usage: normalized,
+    ...(cost !== null && { costNanoAiu: cost }),
   })
 }
 
@@ -143,9 +154,13 @@ function captureImageEvent(
 ): number | undefined {
   if (event.data === undefined || event.data === "[DONE]") return
   const data = JSON.parse(event.data) as ImagesResponse
-  captureUsage(c, data, context)
   const type = data.type ?? event.event
-  if (type?.endsWith(".completed")) return 200
+  const completed = Boolean(type?.endsWith(".completed"))
+  captureUsage(c, data, {
+    ...context,
+    usageComplete: completed ? data.usage !== undefined : undefined,
+  })
+  if (completed) return 200
   if (type === "error" || type?.endsWith(".failed")) return 502
 }
 
@@ -233,7 +248,8 @@ export async function handleImages(c: Context, operation: ImageOperation) {
           }),
         })
     } finally {
-      if (controller.signal.aborted) status = 499
+      if (!terminal && controller.signal.aborted) status = 499
+      if (status !== 200) recordUsage(c, { usageComplete: false })
       cleanup()
       flushUsage(c, status)
     }

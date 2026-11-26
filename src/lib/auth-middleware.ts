@@ -6,10 +6,10 @@ import {
   type AuthTokenRow,
   findAuthTokenByHash,
 } from "~/db/queries/auth-tokens"
-import { countRequestsSince, sumTokensSince } from "~/db/queries/request-logs"
-import { latestUsageReset } from "~/db/queries/usage-resets"
+import { countRequestsSince } from "~/db/queries/request-logs"
 import { hashToken } from "~/lib/auth-token-utils"
 import { state } from "~/lib/state"
+import { getEffectiveMonthlyUsed } from "~/lib/usage-normalizer"
 
 function extractToken(c: {
   req: { header: (name: string) => string | undefined }
@@ -33,13 +33,6 @@ function jsonError(
   extras: Record<string, unknown> = {},
 ) {
   return { error: { type, message, ...extras } }
-}
-
-function startOfCurrentMonthMs(): number {
-  const d = new Date()
-  d.setDate(1)
-  d.setHours(0, 0, 0, 0)
-  return d.getTime()
 }
 
 const PROTECTED_EXACT = new Set(["/token"])
@@ -82,17 +75,16 @@ async function enforceDbTokenLimits(
     }
   }
 
-  // Monthly
-  if (row.monthlyTokenLimit !== null && row.monthlyTokenLimit > 0) {
-    const lastReset = await latestUsageReset(row.id, "monthly")
-    const since = Math.max(startOfCurrentMonthMs(), lastReset)
-    const used = await sumTokensSince(row.id, since)
-    if (used >= row.monthlyTokenLimit) {
-      return c.json(
-        jsonError("monthly_quota_exceeded", "Monthly token quota exceeded."),
-        429,
-      )
-    }
+  // Monthly (persisted lazy-rollover counter on auth_tokens — immune to log pruning)
+  if (
+    row.monthlyTokenLimit !== null
+    && row.monthlyTokenLimit > 0
+    && getEffectiveMonthlyUsed(row) >= row.monthlyTokenLimit
+  ) {
+    return c.json(
+      jsonError("monthly_quota_exceeded", "Monthly token quota exceeded."),
+      429,
+    )
   }
 
   // Lifetime

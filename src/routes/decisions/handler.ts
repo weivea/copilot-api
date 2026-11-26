@@ -9,7 +9,8 @@ import {
   invalidRequest,
   readJson,
 } from "~/lib/openai-request"
-import { getTotalTokens, recordUsage } from "~/lib/usage-recorder"
+import { normalizeSimpleUsage } from "~/lib/usage-normalizer"
+import { recordNormalizedUsage } from "~/lib/usage-recorder"
 import { createDecisions } from "~/services/copilot/create-decisions"
 
 export async function handleDecisions(c: Context) {
@@ -40,11 +41,11 @@ export async function handleDecisions(c: Context) {
     endpoint: "/v1/decisions",
     model: response.model ?? parsed.data.model,
   })
-  recordUsage(c, {
+  recordNormalizedUsage(c, {
     model: response.model ?? parsed.data.model,
-    promptTokens: response.usage?.input_tokens ?? null,
-    completionTokens: response.usage?.output_tokens ?? null,
-    totalTokens: getTotalTokens(response.usage),
+    usage: normalizeSimpleUsage(response.usage, {
+      usageComplete: response.usage !== undefined,
+    }),
     costNanoAiu: pickCostNanoAiu(response),
   })
   return c.json(response)

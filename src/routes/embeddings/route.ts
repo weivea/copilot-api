@@ -6,7 +6,8 @@ import {
   invalidRequest,
   readJson,
 } from "~/lib/openai-request"
-import { recordUsage } from "~/lib/usage-recorder"
+import { normalizeSimpleUsage } from "~/lib/usage-normalizer"
+import { recordNormalizedUsage } from "~/lib/usage-recorder"
 import { createEmbeddings } from "~/services/copilot/create-embeddings"
 
 export const embeddingRoutes = new Hono()
@@ -21,11 +22,9 @@ embeddingRoutes.post("/", async (c) => {
     const payload = parsed.data
     const response = await createEmbeddings(payload)
 
-    recordUsage(c, {
+    recordNormalizedUsage(c, {
       model: response.model,
-      promptTokens: response.usage.prompt_tokens,
-      completionTokens: null,
-      totalTokens: response.usage.total_tokens,
+      usage: normalizeSimpleUsage(response.usage, { usageComplete: true }),
     })
 
     return c.json(response)
