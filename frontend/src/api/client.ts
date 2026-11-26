@@ -67,8 +67,14 @@ export const api = {
   rotateToken: (id: number) =>
     request<CreatedToken>(`/tokens/${id}/rotate`, { method: "POST" }),
 
-  summary: (tokenId: number | "me" | "all") =>
-    request<UsageSummary>(`/usage/summary?token_id=${tokenId}`),
+  summary: (tokenId: number | "me" | "all", from?: number, to?: number) => {
+    const qs = new URLSearchParams({ token_id: String(tokenId) })
+    if (from !== undefined && to !== undefined) {
+      qs.set("from", String(from))
+      qs.set("to", String(to))
+    }
+    return request<UsageSummary>(`/usage/summary?${qs.toString()}`)
+  },
   timeseries: (params: {
     tokenId: number | "me" | "all"
     from: number

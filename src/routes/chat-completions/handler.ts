@@ -18,7 +18,12 @@ import {
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
-import { recordUsage, deferUsage, flushUsage } from "~/lib/usage-recorder"
+import { normalizeChatUsage, type ChatUsageLike } from "~/lib/usage-normalizer"
+import {
+  deferUsage,
+  flushUsage,
+  recordNormalizedUsage,
+} from "~/lib/usage-recorder"
 import { formatErrorWithCause } from "~/lib/utils"
 import {
   createChatCompletions,
@@ -186,13 +191,25 @@ export async function handleCompletion(c: Context) {
   // AbortController governs the upstream fetch so we can cancel cleanly on
   // client disconnect; otherwise an orphaned upstream socket eventually shows
   // up as "socket closed unexpectedly" on the client side.
+  const clientIncludeUsage = payload.stream_options?.include_usage === true
+  const upstreamPayload: ChatCompletionsPayload =
+    payload.stream ?
+      {
+        ...payload,
+        stream_options: {
+          ...payload.stream_options,
+          include_usage: true,
+        },
+      }
+    : payload
+
   const upstreamController = new AbortController()
   const onRequestAbort = () => upstreamController.abort()
   c.req.raw.signal.addEventListener("abort", onRequestAbort, { once: true })
   if (c.req.raw.signal.aborted) upstreamController.abort()
   let response: Awaited<ReturnType<typeof createChatCompletions>>
   try {
-    response = await createChatCompletions(payload, {
+    response = await createChatCompletions(upstreamPayload, {
       signal: upstreamController.signal,
     })
   } catch (error) {
@@ -210,28 +227,28 @@ export async function handleCompletion(c: Context) {
       endpoint: "/v1/chat/completions",
       model: response.model,
     })
-    recordUsage(c, {
+    recordNormalizedUsage(c, {
       model: payload.model,
-      promptTokens: response.usage?.prompt_tokens ?? null,
-      completionTokens: response.usage?.completion_tokens ?? null,
-      totalTokens: response.usage?.total_tokens ?? null,
+      usage: normalizeChatUsage(response.usage, {
+        usageComplete: response.usage !== undefined,
+      }),
       costNanoAiu: pickCostNanoAiu(response),
     })
     return c.json(response)
   }
 
-  const usage = { prompt: 0, completion: 0, total: 0 }
   deferUsage(c)
   return streamSSE(
     c,
     (stream) =>
       pipeOpenAIStream(stream, {
         response,
-        usage,
+        latestUsage: undefined,
+        sawError: false,
         c,
         model: payload.model,
         upstreamController,
-        includeUsage: payload.stream_options?.include_usage === true,
+        includeUsage: clientIncludeUsage,
         costNanoAiu: null,
         onRequestAbort,
         created: Math.floor(Date.now() / 1000),
@@ -248,7 +265,8 @@ export async function handleCompletion(c: Context) {
 
 interface PipeOpenAIStreamCtx {
   response: AsyncIterable<{ data?: string }>
-  usage: { prompt: number; completion: number; total: number }
+  latestUsage: ChatUsageLike | undefined
+  sawError: boolean
   c: Context
   model: string
   upstreamController: AbortController
@@ -258,12 +276,29 @@ interface PipeOpenAIStreamCtx {
   created: number
 }
 
+function mergeChatUsage(
+  prev: ChatUsageLike | undefined,
+  next: ChatCompletionChunk["usage"],
+): ChatUsageLike | undefined {
+  if (!next) return prev
+  return {
+    ...prev,
+    ...next,
+    prompt_tokens_details:
+      next.prompt_tokens_details ?? prev?.prompt_tokens_details,
+    completion_tokens_details:
+      next.completion_tokens_details ?? prev?.completion_tokens_details,
+  }
+}
+
 async function forwardChatChunk(
   stream: SSEStreamingApi,
   data: string,
   ctx: PipeOpenAIStreamCtx,
 ) {
-  const upstream = JSON.parse(data) as Partial<ChatCompletionChunk>
+  const upstream = JSON.parse(data) as Partial<ChatCompletionChunk> & {
+    error?: unknown
+  }
   const parsed =
     Array.isArray(upstream.choices) ?
       {
@@ -273,18 +308,17 @@ async function forwardChatChunk(
         model: upstream.model ?? ctx.model,
       }
     : upstream
-  if (parsed.usage) {
-    ctx.usage.prompt = parsed.usage.prompt_tokens ?? ctx.usage.prompt
-    ctx.usage.completion =
-      parsed.usage.completion_tokens ?? ctx.usage.completion
-    ctx.usage.total = parsed.usage.total_tokens ?? ctx.usage.total
-  }
+  ctx.latestUsage = mergeChatUsage(ctx.latestUsage, parsed.usage)
+  if (parsed.error !== undefined) ctx.sawError = true
   captureInfoMessages(parsed, {
     endpoint: "/v1/chat/completions",
     model: parsed.model,
   })
   ctx.costNanoAiu = pickCostNanoAiu(parsed) ?? ctx.costNanoAiu
   if (!Array.isArray(parsed.choices)) {
+    if (!ctx.includeUsage && parsed.usage && parsed.error === undefined) {
+      return
+    }
     await stream.writeSSE({ data: JSON.stringify(parsed) })
     return
   }
@@ -302,23 +336,63 @@ async function forwardChatChunk(
     })
 }
 
+async function consumeOpenAIStreamChunks(
+  stream: SSEStreamingApi,
+  ctx: PipeOpenAIStreamCtx,
+  abortState: { aborted: boolean },
+): Promise<boolean> {
+  let completed = false
+  for await (const chunk of ctx.response) {
+    if (abortState.aborted) break
+    if (chunk.data === undefined) continue
+    if (chunk.data === "[DONE]") {
+      completed = true
+      await stream.writeSSE({ data: "[DONE]" })
+      break
+    }
+    if (chunk.data) await forwardChatChunk(stream, chunk.data, ctx)
+  }
+  if (!completed && !abortState.aborted) {
+    throw new Error("Upstream chat stream ended before [DONE]")
+  }
+  return completed
+}
+
+async function emitOpenAIStreamError(
+  stream: SSEStreamingApi,
+  error: unknown,
+  finalizerState: { ran: boolean },
+): Promise<void> {
+  if (finalizerState.ran) return
+  finalizerState.ran = true
+  const message = error instanceof Error ? error.message : String(error)
+  try {
+    await stream.writeSSE({
+      data: JSON.stringify({
+        error: { message, type: "upstream_error" },
+      }),
+    })
+    await stream.writeSSE({ data: "[DONE]" })
+  } catch {
+    /* ignore */
+  }
+}
+
 async function pipeOpenAIStream(
   stream: SSEStreamingApi,
   ctx: PipeOpenAIStreamCtx,
 ): Promise<void> {
-  const { response, usage, c, model, upstreamController } = ctx
+  const { c, model, upstreamController } = ctx
   const abortState = { aborted: false }
+  const isAborted = () => abortState.aborted || c.req.raw.signal.aborted
   let completed = false
-  // Idempotency guard: protect the post-error writes from being entered twice
-  // if the catch path and a subsequent fault both fire.
+  let status = 200
   const finalizerState = { ran: false }
   stream.onAbort(() => {
     abortState.aborted = true
     upstreamController.abort()
   })
 
-  // Keep-alive comment frames so proxies don't close idle sockets while
-  // upstream is slow to produce the first / next token.
   const pingInterval = setInterval(() => {
     if (abortState.aborted || stream.closed) return
     stream.write(": keepalive\n\n").catch(() => {
@@ -327,50 +401,30 @@ async function pipeOpenAIStream(
   }, 15_000)
 
   try {
-    for await (const chunk of response) {
-      if (abortState.aborted) break
-      if (chunk.data === undefined) continue
-      if (chunk.data === "[DONE]") {
-        completed = true
-        await stream.writeSSE({ data: "[DONE]" })
-        break
-      }
-      if (chunk.data) await forwardChatChunk(stream, chunk.data, ctx)
-    }
-    if (!completed && !abortState.aborted) {
-      throw new Error("Upstream chat stream ended before [DONE]")
-    }
+    completed = await consumeOpenAIStreamChunks(stream, ctx, abortState)
+    if (ctx.sawError) status = 502
   } catch (error) {
+    status = isAborted() ? 499 : 502
     consola.error(
       "Upstream stream error, closing gracefully:",
       formatErrorWithCause(error),
     )
-    if (!abortState.aborted && !finalizerState.ran) {
-      finalizerState.ran = true
-      const message = error instanceof Error ? error.message : String(error)
-      try {
-        await stream.writeSSE({
-          data: JSON.stringify({
-            error: { message, type: "upstream_error" },
-          }),
-        })
-        await stream.writeSSE({ data: "[DONE]" })
-      } catch {
-        /* ignore */
-      }
+    if (!abortState.aborted) {
+      await emitOpenAIStreamError(stream, error, finalizerState)
     }
   } finally {
+    if (!completed && isAborted()) status = 499
     clearInterval(pingInterval)
     upstreamController.abort()
     c.req.raw.signal.removeEventListener("abort", ctx.onRequestAbort)
-    recordUsage(c, {
+    const usageComplete =
+      completed && status === 200 && ctx.latestUsage !== undefined
+    recordNormalizedUsage(c, {
       model,
-      promptTokens: usage.prompt || null,
-      completionTokens: usage.completion || null,
-      totalTokens: usage.total || null,
+      usage: normalizeChatUsage(ctx.latestUsage, { usageComplete }),
       costNanoAiu: ctx.costNanoAiu,
     })
-    flushUsage(c)
+    flushUsage(c, status)
   }
 }
 

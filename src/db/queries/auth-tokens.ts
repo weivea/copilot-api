@@ -1,4 +1,6 @@
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
+
+import { startOfCurrentMonthMs } from "~/lib/usage-normalizer"
 
 import { getDb } from "../client"
 import { authTokens } from "../schema"
@@ -23,6 +25,8 @@ export interface AuthTokenRow {
   isDisabled: number
   rpmLimit: number | null
   monthlyTokenLimit: number | null
+  monthlyTokenUsed: number
+  monthlyWindowStart: number
   lifetimeTokenLimit: number | null
   lifetimeTokenUsed: number
   createdAt: number
@@ -136,19 +140,30 @@ export async function setLifetimeUsed(
     .where(eq(authTokens.id, id))
 }
 
+export async function setMonthlyUsed(
+  id: number,
+  value: number,
+  windowStart = startOfCurrentMonthMs(),
+): Promise<void> {
+  const db = getDb()
+  await db
+    .update(authTokens)
+    .set({ monthlyTokenUsed: value, monthlyWindowStart: windowStart })
+    .where(eq(authTokens.id, id))
+}
+
 export async function incrementLifetimeUsed(
   id: number,
   delta: number,
 ): Promise<void> {
   if (delta <= 0) return
   const db = getDb()
-  // Wrap in Promise to await and satisfy require-await lint rule
-  await new Promise<void>((resolve) => {
-    const sql = `UPDATE auth_tokens SET lifetime_token_used = lifetime_token_used + ? WHERE id = ?`
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any,@typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
-    ;(db as any).$client.prepare(sql).run(delta, id)
-    resolve()
-  })
+  await db
+    .update(authTokens)
+    .set({
+      lifetimeTokenUsed: sql`${authTokens.lifetimeTokenUsed} + ${delta}`,
+    })
+    .where(eq(authTokens.id, id))
 }
 
 export async function touchLastUsed(

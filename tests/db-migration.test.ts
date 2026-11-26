@@ -48,9 +48,103 @@ describe("initDb migration", () => {
     const rows = sqlite
       .query(`SELECT count(*) AS c FROM __drizzle_migrations`)
       .all() as Array<{ c: number }>
-    // Two migrations: 0000 + 0001.
-    expect(rows[0]?.c).toBe(2)
+    // Three migrations: 0000 + 0001 + 0002.
+    expect(rows[0]?.c).toBe(3)
     sqlite.close()
+  })
+
+  test("0002 migration upgrades an authentic 0001 DB and backfills billable_tokens + monthly_token_used", async () => {
+    const p = tmpDbPath()
+    const partialMigrations = fs.mkdtempSync(
+      path.join(os.tmpdir(), "copilot-api-mig0001-"),
+    )
+    cleanup.push(() =>
+      fs.rmSync(partialMigrations, { recursive: true, force: true }),
+    )
+    fs.mkdirSync(path.join(partialMigrations, "meta"), { recursive: true })
+    const repoDrizzle = path.resolve(import.meta.dir, "../drizzle")
+    for (const f of ["0000_open_blob.sql", "0001_add_cost_nano_aiu.sql"]) {
+      fs.copyFileSync(
+        path.join(repoDrizzle, f),
+        path.join(partialMigrations, f),
+      )
+    }
+    const fullJournal = (await Bun.file(
+      path.join(repoDrizzle, "meta/_journal.json"),
+    ).json()) as { entries: Array<unknown> }
+    fs.writeFileSync(
+      path.join(partialMigrations, "meta/_journal.json"),
+      JSON.stringify({
+        ...fullJournal,
+        entries: fullJournal.entries.slice(0, 2),
+      }),
+    )
+
+    const { drizzle } = await import("drizzle-orm/bun-sqlite")
+    const legacySqlite = new Database(p)
+    migrator.migrate(drizzle(legacySqlite), {
+      migrationsFolder: partialMigrations,
+    })
+    const now = Date.now()
+    legacySqlite.run(`
+      INSERT INTO auth_tokens (name, token_hash, token_prefix, created_at)
+      VALUES ('legacy', 'legacy-hash', 'cpk-leg', ${now});
+    `)
+    const { id } = legacySqlite
+      .query(`SELECT id FROM auth_tokens WHERE token_hash = 'legacy-hash'`)
+      .get() as { id: number }
+    legacySqlite.run(`
+      INSERT INTO request_logs (auth_token_id, timestamp, endpoint, status_code, total_tokens)
+      VALUES
+        (${id}, ${now - 30}, '/v1/chat/completions', 200, 120),
+        (${id}, ${now - 20}, '/v1/messages/count_tokens', 200, 999),
+        (${id}, ${now - 10}, '/v1/chat/completions', 502, NULL);
+    `)
+    legacySqlite.close()
+
+    // Upgrade via initDb (runs 0002 SQL backfill + backfillMonthlyTokenUsage)
+    initDb(p)
+
+    const afterDb = new Database(p)
+    const backfilledLogs = afterDb
+      .query(
+        `SELECT endpoint, status_code, total_tokens, billable_tokens FROM request_logs ORDER BY timestamp ASC`,
+      )
+      .all() as Array<{
+      endpoint: string
+      status_code: number
+      total_tokens: number | null
+      billable_tokens: number | null
+    }>
+    expect(backfilledLogs).toEqual([
+      {
+        endpoint: "/v1/chat/completions",
+        status_code: 200,
+        total_tokens: 120,
+        billable_tokens: 120,
+      },
+      {
+        endpoint: "/v1/messages/count_tokens",
+        status_code: 200,
+        total_tokens: 999,
+        billable_tokens: 0,
+      },
+      {
+        endpoint: "/v1/chat/completions",
+        status_code: 502,
+        total_tokens: null,
+        billable_tokens: null,
+      },
+    ])
+
+    const tok = afterDb
+      .query(
+        `SELECT monthly_token_used, monthly_window_start FROM auth_tokens WHERE id = ?`,
+      )
+      .get(id) as { monthly_token_used: number; monthly_window_start: number }
+    expect(tok.monthly_token_used).toBe(120)
+    expect(tok.monthly_window_start).toBeGreaterThan(0)
+    afterDb.close()
   })
 
   test("inserts can carry cost_nano_aiu after migration", async () => {

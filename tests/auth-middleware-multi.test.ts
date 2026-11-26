@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
 import { createAuthToken } from "../src/db/queries/auth-tokens"
-import { insertRequestLog } from "../src/db/queries/request-logs"
+import {
+  insertRequestLog,
+  recordRequestAndQuota,
+} from "../src/db/queries/request-logs"
 import { authMiddleware } from "../src/lib/auth-middleware"
 import { hashToken } from "../src/lib/auth-token-utils"
 import { state } from "../src/lib/state"
@@ -115,12 +118,13 @@ describe("authMiddleware (multi)", () => {
     const monthStart = new Date()
     monthStart.setDate(1)
     monthStart.setHours(0, 0, 0, 0)
-    await insertRequestLog({
+    recordRequestAndQuota({
       authTokenId: id,
       timestamp: monthStart.getTime() + 1,
       endpoint: "/v1/messages",
       statusCode: 200,
       totalTokens: 100,
+      billableTokens: 100,
     })
     const res = await makeApp().request("/v1/messages", {
       method: "POST",

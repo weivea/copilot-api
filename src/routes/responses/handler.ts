@@ -10,7 +10,12 @@ import {
 } from "~/lib/copilot-info-messages"
 import { HTTPError } from "~/lib/error"
 import { invalidRequest, readJson } from "~/lib/openai-request"
-import { deferUsage, flushUsage, recordUsage } from "~/lib/usage-recorder"
+import { normalizeResponsesUsage } from "~/lib/usage-normalizer"
+import {
+  deferUsage,
+  flushUsage,
+  recordNormalizedUsage,
+} from "~/lib/usage-recorder"
 import {
   createResponses,
   type ResponsesCompletedEvent,
@@ -21,18 +26,124 @@ import {
 interface StreamCaptureState {
   cost: number | null
   model: string | null
-  usage: { input: number; output: number; total: number }
+  usage: ResponsesResponse["usage"] | undefined
+  hasFinalUsage: boolean
 }
 
-function captureFromCompletedEvent(
+type RawResponsesEvent = {
+  event?: string
+  data?: string
+  id?: string
+  retry?: number
+}
+
+function classifyResponsesEvent(eventName: string | undefined): {
+  terminal: boolean
+  failed: boolean
+} {
+  if (
+    eventName === "error"
+    || eventName === "response.error"
+    || eventName === "response.failed"
+  ) {
+    return { terminal: true, failed: true }
+  }
+  if (
+    eventName === "response.completed"
+    || eventName === "response.incomplete"
+  ) {
+    return { terminal: true, failed: false }
+  }
+  return { terminal: false, failed: false }
+}
+
+interface PipeResponsesArgs {
+  c: Context
+  upstream: AsyncIterable<RawResponsesEvent>
+  upstreamController: AbortController
+  onAbort: () => void
+  capture: StreamCaptureState
+}
+
+async function consumeResponsesEvents(
+  stream: {
+    writeSSE: (msg: RawResponsesEvent & { data: string }) => Promise<void>
+  },
+  args: PipeResponsesArgs,
+): Promise<{ terminal: boolean; failed: boolean }> {
+  let terminal = false
+  let failed = false
+  for await (const evt of args.upstream) {
+    if (args.upstreamController.signal.aborted) break
+    captureFromStreamEvent(evt, args.capture)
+    const cls = classifyResponsesEvent(evt.event)
+    if (cls.terminal) terminal = true
+    if (cls.failed) failed = true
+    if (evt.data !== undefined) {
+      await stream.writeSSE({ ...evt, data: evt.data })
+    }
+  }
+  return { terminal, failed }
+}
+
+async function pipeResponsesStream(
+  stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+  args: PipeResponsesArgs,
+): Promise<void> {
+  const { c, upstreamController, onAbort, capture } = args
+  const isAborted = () =>
+    upstreamController.signal.aborted || c.req.raw.signal.aborted
+  stream.onAbort(onAbort)
+  let terminal = false
+  let status = 200
+  try {
+    const res = await consumeResponsesEvents(stream, args)
+    terminal = res.terminal
+    if (res.failed) status = 502
+    if (!terminal && !upstreamController.signal.aborted) {
+      throw new Error("Upstream Responses stream ended before a terminal event")
+    }
+  } catch (error) {
+    status = isAborted() ? 499 : 502
+    consola.error("Upstream /responses stream failed:", error)
+    const message = error instanceof Error ? error.message : String(error)
+    if (!upstreamController.signal.aborted) {
+      await stream.writeSSE({
+        event: "error",
+        data: JSON.stringify({
+          type: "error",
+          code: "upstream_error",
+          message,
+          param: null,
+        }),
+      })
+    }
+  } finally {
+    if (!terminal && isAborted()) status = 499
+    upstreamController.abort()
+    c.req.raw.signal.removeEventListener("abort", onAbort)
+    recordNormalizedUsage(c, {
+      model: capture.model,
+      usage: normalizeResponsesUsage(capture.usage, {
+        usageComplete: capture.hasFinalUsage && status === 200,
+      }),
+      costNanoAiu: capture.cost,
+    })
+    flushUsage(c, status)
+  }
+}
+
+function captureFromStreamEvent(
   evt: { event?: string; data?: string },
   capture: StreamCaptureState,
 ): void {
   if (
-    (evt.event !== "response.completed" && evt.event !== "response.incomplete")
-    || !evt.data
+    evt.event !== "response.completed"
+    && evt.event !== "response.incomplete"
+    && evt.event !== "response.failed"
   )
     return
+  if (!evt.data) return
   try {
     const parsed = JSON.parse(evt.data) as ResponsesCompletedEvent
     if (!parsed.response) return
@@ -46,12 +157,12 @@ function captureFromCompletedEvent(
     })
     const cost = pickCostNanoAiu(parsed) ?? pickCostNanoAiu(parsed.response)
     if (cost !== null) capture.cost = cost
-    capture.usage.input =
-      parsed.response.usage?.input_tokens ?? capture.usage.input
-    capture.usage.output =
-      parsed.response.usage?.output_tokens ?? capture.usage.output
-    capture.usage.total =
-      parsed.response.usage?.total_tokens ?? capture.usage.total
+    if (parsed.response.usage) {
+      capture.usage = parsed.response.usage
+      if (evt.event !== "response.failed") {
+        capture.hasFinalUsage = true
+      }
+    }
     capture.model = parsed.response.model
   } catch {
     /* best-effort; never break pass-through on parse failure */
@@ -140,70 +251,23 @@ export async function handleResponses(c: Context) {
   if (payload.stream) {
     const capture: StreamCaptureState = {
       cost: null,
-      model: null,
-      usage: { input: 0, output: 0, total: 0 },
+      model: payload.model,
+      usage: undefined,
+      hasFinalUsage: false,
     }
     deferUsage(c)
 
     // Pass-through SSE: serialise each event back into the SSE wire format.
     return streamSSE(
       c,
-      async (stream) => {
-        stream.onAbort(onAbort)
-        let terminal = false
-        try {
-          for await (const evt of upstream as AsyncIterable<{
-            event?: string
-            data?: string
-            id?: string
-            retry?: number
-          }>) {
-            if (upstreamController.signal.aborted) break
-            captureFromCompletedEvent(evt, capture)
-            if (
-              [
-                "error",
-                "response.completed",
-                "response.error",
-                "response.failed",
-                "response.incomplete",
-              ].includes(evt.event ?? "")
-            ) {
-              terminal = true
-            }
-            if (evt.data !== undefined)
-              await stream.writeSSE({ ...evt, data: evt.data })
-          }
-          if (!terminal && !upstreamController.signal.aborted)
-            throw new Error(
-              "Upstream Responses stream ended before a terminal event",
-            )
-        } catch (error) {
-          consola.error("Upstream /responses stream failed:", error)
-          const message = error instanceof Error ? error.message : String(error)
-          if (!upstreamController.signal.aborted)
-            await stream.writeSSE({
-              event: "error",
-              data: JSON.stringify({
-                type: "error",
-                code: "upstream_error",
-                message,
-                param: null,
-              }),
-            })
-        } finally {
-          upstreamController.abort()
-          c.req.raw.signal.removeEventListener("abort", onAbort)
-          recordUsage(c, {
-            model: capture.model,
-            promptTokens: capture.usage.input || null,
-            completionTokens: capture.usage.output || null,
-            totalTokens: capture.usage.total || null,
-            costNanoAiu: capture.cost,
-          })
-          flushUsage(c)
-        }
-      },
+      (stream) =>
+        pipeResponsesStream(stream, {
+          c,
+          upstream: upstream as AsyncIterable<RawResponsesEvent>,
+          upstreamController,
+          onAbort,
+          capture,
+        }),
       (error) => {
         consola.error("Responses stream write failed:", error)
         return Promise.resolve()
@@ -223,11 +287,11 @@ export async function handleResponses(c: Context) {
     endpoint: "/v1/responses",
     model: resp.model,
   })
-  recordUsage(c, {
+  recordNormalizedUsage(c, {
     model: resp.model,
-    promptTokens: resp.usage?.input_tokens ?? null,
-    completionTokens: resp.usage?.output_tokens ?? null,
-    totalTokens: resp.usage?.total_tokens ?? null,
+    usage: normalizeResponsesUsage(resp.usage, {
+      usageComplete: resp.usage !== undefined,
+    }),
     costNanoAiu: pickCostNanoAiu(resp),
   })
   return c.json(resp)

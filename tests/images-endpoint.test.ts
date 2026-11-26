@@ -3,12 +3,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import {
   createAuthToken,
   getAuthTokenById,
-  setLifetimeUsed,
 } from "../src/db/queries/auth-tokens"
 import {
   aggregateUsageSince,
-  insertRequestLog,
   recentLogs,
+  recordRequestAndQuota,
   sumTokensSince,
 } from "../src/db/queries/request-logs"
 import { hashToken } from "../src/lib/auth-token-utils"
@@ -326,14 +325,14 @@ describe("Images API", () => {
         monthlyTokenLimit: limit === "monthly" ? 25 : null,
         lifetimeTokenLimit: limit === "lifetime" ? 25 : null,
       })
-      await insertRequestLog({
+      recordRequestAndQuota({
         authTokenId: tokenId,
         timestamp: Date.now(),
         endpoint: "/v1/chat/completions",
         totalTokens: 5,
+        billableTokens: 5,
         statusCode: 200,
       })
-      await setLifetimeUsed(tokenId, 5)
       const decision = {
         model: "test-decisions",
         input: "The service is down.",
