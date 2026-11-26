@@ -53,52 +53,90 @@ describe("initDb migration", () => {
     sqlite.close()
   })
 
-  test("0002 migration adds usage detail columns and backfills billable_tokens + monthly_token_used", () => {
+  test("0002 migration upgrades an authentic 0001 DB and backfills billable_tokens + monthly_token_used", async () => {
     const p = tmpDbPath()
-    const sqlite = new Database(p)
-    // Apply only 0000 + 0001 via Drizzle migrator? Simpler: create an authentic 0001-era DB,
-    // or test initDb on fresh + pre-seeded pre-backfill rows.
-    sqlite.close()
+    const partialMigrations = fs.mkdtempSync(
+      path.join(os.tmpdir(), "copilot-api-mig0001-"),
+    )
+    cleanup.push(() =>
+      fs.rmSync(partialMigrations, { recursive: true, force: true }),
+    )
+    fs.mkdirSync(path.join(partialMigrations, "meta"), { recursive: true })
+    const repoDrizzle = path.resolve(import.meta.dir, "../drizzle")
+    for (const f of ["0000_open_blob.sql", "0001_add_cost_nano_aiu.sql"]) {
+      fs.copyFileSync(
+        path.join(repoDrizzle, f),
+        path.join(partialMigrations, f),
+      )
+    }
+    const fullJournal = (await Bun.file(
+      path.join(repoDrizzle, "meta/_journal.json"),
+    ).json()) as { entries: Array<unknown> }
+    fs.writeFileSync(
+      path.join(partialMigrations, "meta/_journal.json"),
+      JSON.stringify({
+        ...fullJournal,
+        entries: fullJournal.entries.slice(0, 2),
+      }),
+    )
 
-    initDb(p)
-    const verifyDb = new Database(p)
-    const logCols = verifyDb
-      .query(`PRAGMA table_info(request_logs)`)
-      .all() as Array<{ name: string }>
-    const colNames = logCols.map((c) => c.name)
-    expect(colNames).toContain("cached_tokens")
-    expect(colNames).toContain("cache_creation_tokens")
-    expect(colNames).toContain("reasoning_tokens")
-    expect(colNames).toContain("billable_tokens")
-    expect(colNames).toContain("usage_complete")
-
-    const tokenCols = verifyDb
-      .query(`PRAGMA table_info(auth_tokens)`)
-      .all() as Array<{ name: string }>
-    const tokenColNames = tokenCols.map((c) => c.name)
-    expect(tokenColNames).toContain("monthly_token_used")
-    expect(tokenColNames).toContain("monthly_window_start")
-
-    // Simulate a pre-0002 upgraded token whose monthly_window_start is still 0
+    const { drizzle } = await import("drizzle-orm/bun-sqlite")
+    const legacySqlite = new Database(p)
+    migrator.migrate(drizzle(legacySqlite), {
+      migrationsFolder: partialMigrations,
+    })
     const now = Date.now()
-    verifyDb.run(`
-      INSERT INTO auth_tokens (name, token_hash, token_prefix, created_at, monthly_token_used, monthly_window_start)
-      VALUES ('legacy', 'legacy-hash', 'cpk-leg', ${now}, 0, 0);
+    legacySqlite.run(`
+      INSERT INTO auth_tokens (name, token_hash, token_prefix, created_at)
+      VALUES ('legacy', 'legacy-hash', 'cpk-leg', ${now});
     `)
-    const { id } = verifyDb
+    const { id } = legacySqlite
       .query(`SELECT id FROM auth_tokens WHERE token_hash = 'legacy-hash'`)
       .get() as { id: number }
-    verifyDb.run(`
-      INSERT INTO request_logs (auth_token_id, timestamp, endpoint, status_code, total_tokens, billable_tokens)
+    legacySqlite.run(`
+      INSERT INTO request_logs (auth_token_id, timestamp, endpoint, status_code, total_tokens)
       VALUES
-        (${id}, ${now}, '/v1/chat/completions', 200, 120, 120),
-        (${id}, ${now}, '/v1/messages/count_tokens', 200, 999, 0);
+        (${id}, ${now - 30}, '/v1/chat/completions', 200, 120),
+        (${id}, ${now - 20}, '/v1/messages/count_tokens', 200, 999),
+        (${id}, ${now - 10}, '/v1/chat/completions', 502, NULL);
     `)
-    verifyDb.close()
+    legacySqlite.close()
 
-    // Re-running initDb triggers idempotent backfillMonthlyTokenUsage
+    // Upgrade via initDb (runs 0002 SQL backfill + backfillMonthlyTokenUsage)
     initDb(p)
+
     const afterDb = new Database(p)
+    const backfilledLogs = afterDb
+      .query(
+        `SELECT endpoint, status_code, total_tokens, billable_tokens FROM request_logs ORDER BY timestamp ASC`,
+      )
+      .all() as Array<{
+      endpoint: string
+      status_code: number
+      total_tokens: number | null
+      billable_tokens: number | null
+    }>
+    expect(backfilledLogs).toEqual([
+      {
+        endpoint: "/v1/chat/completions",
+        status_code: 200,
+        total_tokens: 120,
+        billable_tokens: 120,
+      },
+      {
+        endpoint: "/v1/messages/count_tokens",
+        status_code: 200,
+        total_tokens: 999,
+        billable_tokens: 0,
+      },
+      {
+        endpoint: "/v1/chat/completions",
+        status_code: 502,
+        total_tokens: null,
+        billable_tokens: null,
+      },
+    ])
+
     const tok = afterDb
       .query(
         `SELECT monthly_token_used, monthly_window_start FROM auth_tokens WHERE id = ?`,

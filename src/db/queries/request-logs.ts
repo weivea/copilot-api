@@ -301,7 +301,6 @@ export interface UsageBreakdown {
 interface RawBreakdownRow {
   requests: number
   promptSum: number
-  cachedCount: number
   cachedSum: number
   cacheCreationCount: number
   cacheCreationSum: number
@@ -320,7 +319,6 @@ function breakdownSelectFields() {
   return {
     requests: sql<number>`count(*)`,
     promptSum: sql<number>`coalesce(sum(${requestLogs.promptTokens}), 0)`,
-    cachedCount: sql<number>`count(${requestLogs.cachedTokens})`,
     cachedSum: sql<number>`coalesce(sum(${requestLogs.cachedTokens}), 0)`,
     cacheCreationCount: sql<number>`count(${requestLogs.cacheCreationTokens})`,
     cacheCreationSum: sql<number>`coalesce(sum(${requestLogs.cacheCreationTokens}), 0)`,
@@ -355,7 +353,6 @@ export function emptyUsageBreakdown(): UsageBreakdown {
 function mapBreakdownRow(row: RawBreakdownRow | undefined): UsageBreakdown {
   if (!row || row.requests === 0) return emptyUsageBreakdown()
   const {
-    cachedCount,
     cachedSum,
     cacheCreationCount,
     reasoningCount,
@@ -364,15 +361,16 @@ function mapBreakdownRow(row: RawBreakdownRow | undefined): UsageBreakdown {
     completePromptBase,
     billableSum,
   } = row
+  const cacheComplete = completeCacheRows > 0 && missingCacheRows === 0
   const cacheHitRate =
-    completeCacheRows > 0 && missingCacheRows === 0 && completePromptBase > 0 ?
+    cacheComplete && completePromptBase > 0 ?
       Math.round((cachedSum / completePromptBase) * 1000) / 10
     : null
   return {
     requests: row.requests,
     tokens: billableSum,
     promptTokens: row.promptSum,
-    cachedTokens: cachedCount > 0 ? cachedSum : null,
+    cachedTokens: cacheComplete ? cachedSum : null,
     cacheCreationTokens: cacheCreationCount > 0 ? row.cacheCreationSum : null,
     completionTokens: row.completionSum,
     reasoningTokens: reasoningCount > 0 ? row.reasoningSum : null,

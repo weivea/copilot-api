@@ -244,6 +244,7 @@ export async function handleCompletion(c: Context) {
       pipeOpenAIStream(stream, {
         response,
         latestUsage: undefined,
+        sawError: false,
         c,
         model: payload.model,
         upstreamController,
@@ -265,6 +266,7 @@ export async function handleCompletion(c: Context) {
 interface PipeOpenAIStreamCtx {
   response: AsyncIterable<{ data?: string }>
   latestUsage: ChatUsageLike | undefined
+  sawError: boolean
   c: Context
   model: string
   upstreamController: AbortController
@@ -307,6 +309,7 @@ async function forwardChatChunk(
       }
     : upstream
   ctx.latestUsage = mergeChatUsage(ctx.latestUsage, parsed.usage)
+  if (parsed.error !== undefined) ctx.sawError = true
   captureInfoMessages(parsed, {
     endpoint: "/v1/chat/completions",
     model: parsed.model,
@@ -399,6 +402,7 @@ async function pipeOpenAIStream(
 
   try {
     completed = await consumeOpenAIStreamChunks(stream, ctx, abortState)
+    if (ctx.sawError) status = 502
   } catch (error) {
     status = isAborted() ? 499 : 502
     consola.error(

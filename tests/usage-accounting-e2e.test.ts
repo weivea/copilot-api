@@ -452,6 +452,51 @@ describe("Edge cases: zero output, interrupted streams, duplicate terminal event
     expect(tok?.monthlyTokenUsed).toBe(0)
   })
 
+  test("In-band SSE error chunk followed by [DONE] on Chat stream records statusCode=502 and usageComplete=0", async () => {
+    const tokenPlain = "cpk-inband-err"
+    const tokenId = await createUserToken(tokenPlain)
+
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        sseResponse([
+          `data: ${JSON.stringify({
+            id: "chatcmpl-err",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "gemini-2.5-pro",
+            choices: [],
+            usage: {
+              prompt_tokens: 80,
+              completion_tokens: 5,
+              total_tokens: 85,
+            },
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            error: { message: "upstream boom", type: "upstream_error" },
+          })}\n\n`,
+          `data: [DONE]\n\n`,
+        ]),
+      )) as unknown as typeof fetch
+
+    const res = await server.request("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenPlain}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gemini-2.5-pro",
+        stream: true,
+        messages: [{ role: "user", content: "fail mid-stream" }],
+      }),
+    })
+    await res.text()
+
+    const [log] = await recentLogs({ tokenId, limit: 1 })
+    expect(log.statusCode).toBe(502)
+    expect(log.usageComplete).toBe(0)
+  })
+
   test("Duplicate terminal SSE events bill the request exactly once", async () => {
     const tokenPlain = "cpk-dup-terminal"
     const tokenId = await createUserToken(tokenPlain)
@@ -637,7 +682,13 @@ describe("Range parity, Monthly %, cache hit rate completeness, and log pruning 
         `/admin/api/usage/summary?token_id=${tokenId}&from=${from}&to=${to}`,
         { headers: { cookie } },
       )
-    ).json()) as { range_breakdown: { cache_hit_rate: number | null } }
+    ).json()) as {
+      range_breakdown: {
+        cached_tokens: number | null
+        cache_hit_rate: number | null
+      }
+    }
+    expect(sumMixed.range_breakdown.cached_tokens).toBeNull()
     expect(sumMixed.range_breakdown.cache_hit_rate).toBeNull()
 
     // Prune ALL request_logs — monthly quota MUST NOT recover!

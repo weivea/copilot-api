@@ -101,6 +101,17 @@ export function computeBillableTokens(
   return totalTokens > 0 ? totalTokens : 0
 }
 
+function resolveNormalizedComplete(
+  totalTokens: number | null,
+  opts: NormalizeOptions,
+): boolean {
+  const billable = opts.billable ?? true
+  if (billable) {
+    return (opts.usageComplete ?? true) && totalTokens !== null
+  }
+  return opts.usageComplete ?? totalTokens !== null
+}
+
 function emptyNormalizedUsage(opts: NormalizeOptions = {}): NormalizedUsage {
   const billable = opts.billable ?? true
   return {
@@ -111,7 +122,7 @@ function emptyNormalizedUsage(opts: NormalizeOptions = {}): NormalizedUsage {
     reasoningTokens: null,
     totalTokens: null,
     billableTokens: billable ? null : 0,
-    usageComplete: opts.usageComplete ?? false,
+    usageComplete: resolveNormalizedComplete(null, opts),
   }
 }
 
@@ -148,14 +159,13 @@ export function normalizeChatUsage(
     numOrNull(usage.completion_tokens_details?.reasoning_tokens)
     ?? numOrNull(usage.reasoning_tokens)
 
-  const upstreamTotal = numOrNull(usage.total_tokens)
-  const totalTokens =
-    upstreamTotal
-    ?? (promptTokens !== null && completionTokens !== null ?
-      promptTokens + completionTokens
-    : null)
+  const totalTokens = deriveTotalTokens(
+    numOrNull(usage.total_tokens),
+    promptTokens,
+    completionTokens,
+  )
 
-  const usageComplete = opts.usageComplete ?? totalTokens !== null
+  const usageComplete = resolveNormalizedComplete(totalTokens, opts)
   const result: NormalizedUsage = {
     promptTokens,
     cachedTokens,
@@ -191,14 +201,13 @@ export function normalizeResponsesUsage(
     usage.output_tokens_details?.reasoning_tokens,
   )
 
-  const upstreamTotal = numOrNull(usage.total_tokens)
-  const totalTokens =
-    upstreamTotal
-    ?? (promptTokens !== null && completionTokens !== null ?
-      promptTokens + completionTokens
-    : null)
+  const totalTokens = deriveTotalTokens(
+    numOrNull(usage.total_tokens),
+    promptTokens,
+    completionTokens,
+  )
 
-  const usageComplete = opts.usageComplete ?? totalTokens !== null
+  const usageComplete = resolveNormalizedComplete(totalTokens, opts)
   const result: NormalizedUsage = {
     promptTokens,
     cachedTokens,
@@ -253,7 +262,7 @@ export function normalizeAnthropicUsage(
       promptTokens + completionTokens
     : null
 
-  const usageComplete = opts.usageComplete ?? totalTokens !== null
+  const usageComplete = resolveNormalizedComplete(totalTokens, opts)
   const result: NormalizedUsage = {
     promptTokens,
     cachedTokens,
@@ -302,7 +311,7 @@ export function normalizeSimpleUsage(
     completionTokens,
   )
 
-  const usageComplete = opts.usageComplete ?? totalTokens !== null
+  const usageComplete = resolveNormalizedComplete(totalTokens, opts)
   const result: NormalizedUsage = {
     promptTokens,
     cachedTokens: sub.cachedTokens,

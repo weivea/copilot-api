@@ -79,7 +79,7 @@ export interface RecentLog {
   reasoningTokens: number | null
   totalTokens: number | null
   billableTokens: number | null
-  usageComplete: number
+  usageComplete: number | null
   statusCode: number
   latencyMs: number | null
 }

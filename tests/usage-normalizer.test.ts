@@ -112,6 +112,20 @@ describe("usage-normalizer", () => {
     expect(missing.totalTokens).toBeNull()
     expect(missing.billableTokens).toBeNull()
     expect(missing.usageComplete).toBe(false)
+
+    // Even if caller passes usageComplete: true, a billable record missing totalTokens MUST be incomplete
+    const partialWithTrueFlag = normalizeChatUsage(
+      { prompt_tokens: 100 },
+      { usageComplete: true },
+    )
+    expect(partialWithTrueFlag.totalTokens).toBeNull()
+    expect(partialWithTrueFlag.billableTokens).toBeNull()
+    expect(partialWithTrueFlag.usageComplete).toBe(false)
+
+    const emptyWithTrueFlag = normalizeAnthropicUsage(undefined, {
+      usageComplete: true,
+    })
+    expect(emptyWithTrueFlag.usageComplete).toBe(false)
   })
 
   test("getEffectiveMonthlyUsed lazily rolls over across month boundary and respects mid-month reset", () => {
